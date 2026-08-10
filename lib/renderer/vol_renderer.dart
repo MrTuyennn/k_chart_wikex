@@ -26,6 +26,7 @@ class VolRenderer extends BaseChartRenderer<VolumeEntity> {
 
   VolRenderer(
     Rect volRect,
+    Rect priceAxisRect,
     double maxValue,
     double minValue,
     double topPadding,
@@ -34,6 +35,7 @@ class VolRenderer extends BaseChartRenderer<VolumeEntity> {
     this.chartColors,
   ) : super(
         chartRect: volRect,
+        priceAxisRect: priceAxisRect,
         maxValue: maxValue,
         minValue: minValue,
         topPadding: topPadding,
@@ -135,6 +137,8 @@ class VolRenderer extends BaseChartRenderer<VolumeEntity> {
     tp.paint(canvas, Offset(x, chartRect.top - topPadding));
   }
 
+  /// Vẽ vào [priceAxisRect] (strip riêng bên phải, §7) — KHÔNG đè lên cột vol
+  /// như trước khi có strip.
   @override
   void drawVerticalText(Canvas canvas, TextStyle textStyle, int gridRows) {
     final maxTp = TextPainter(
@@ -147,7 +151,7 @@ class VolRenderer extends BaseChartRenderer<VolumeEntity> {
     maxTp.paint(
       canvas,
       Offset(
-        chartRect.width - maxTp.width - chartStyle.space,
+        priceAxisRect.right - maxTp.width - chartStyle.space,
         chartRect.top - topPadding,
       ),
     );
@@ -161,24 +165,23 @@ class VolRenderer extends BaseChartRenderer<VolumeEntity> {
     minTp.paint(
       canvas,
       Offset(
-        chartRect.width - minTp.width - chartStyle.space,
+        priceAxisRect.right - minTp.width - chartStyle.space,
         chartRect.bottom - minTp.height,
       ),
     );
   }
 
   @override
-  void drawGrid(Canvas canvas, int gridRows, int gridColumns) {
+  void drawGrid(Canvas canvas, int gridRows, List<double> verticalXs) {
     canvas.drawLine(
       Offset(0, chartRect.bottom),
       Offset(chartRect.width, chartRect.bottom),
       gridPaint,
     );
-    final columnSpace = chartRect.width / gridColumns;
-    for (int i = 0; i <= gridColumns; i++) {
+    for (final x in verticalXs) {
       canvas.drawLine(
-        Offset(columnSpace * i, chartRect.top - topPadding),
-        Offset(columnSpace * i, chartRect.bottom),
+        Offset(x, chartRect.top - topPadding),
+        Offset(x, chartRect.bottom),
         gridPaint,
       );
     }

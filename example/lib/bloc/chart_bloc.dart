@@ -132,6 +132,11 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
   StreamSubscription<RealtimeFrame>? _thumbSub;
   StreamSubscription<RealtimeFrame>? _tradePlateSub;
 
+  // Số lần tối đa mở rộng cửa sổ fetch lịch sử khi gặp gap (xem _loadHistory)
+  // — ×4 mỗi lần nên 4 lần đã phủ 4^4 = 256x cửa sổ gốc, đủ vượt qua downtime
+  // vài ngày mà không loop mãi nếu symbol thật sự chỉ có ít data.
+  static const int _kMaxHistoryWidenAttempts = 4;
+
   // Coalesce WS: buffer bar đến trong cửa sổ ngắn rồi flush 1 lần —
   // không rebuild chart theo từng message.
   static const Duration _coalesceWindow = Duration(milliseconds: 250);
@@ -261,19 +266,37 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     emit(state.copyWith(isFetching: true, error: null));
     try {
       final toMs = DateTime.now().toUtc().millisecondsSinceEpoch;
-      final fromMs =
-          toMs -
-          ChartState.initialBatchSize * timeframe.interval.inMilliseconds;
-      final bars = await fetchMarketHistory(
-        apiBaseUrl: MarketEnv.apiBaseUrl,
-        historyPath: MarketEnv.historyPath,
-        symbol: MarketEnv.symbol,
-        resolution: timeframe.restResolution,
-        period: timeframe.wsPeriod,
-        fromMs: fromMs,
-        toMs: toMs,
-      );
-      if (isClosed || state.timeframe != timeframe) return; // đã đổi khung khác
+      final intervalMs = timeframe.interval.inMilliseconds;
+      // Cửa sổ ban đầu (`initialBatchSize × interval`) giả định data liên
+      // tục. Sàn có thể có downtime/gap gần đây (hay gặp ở môi trường dev —
+      // vd 15m từng bị hở ~2 ngày ngay trước "hiện tại") khiến server trả về
+      // ÍT hơn initialBatchSize dù KHÔNG rỗng (còn lịch sử xa hơn gap). Mở
+      // rộng cửa sổ lùi xa hơn (×4 mỗi lần) tới khi đủ nến hoặc server trả
+      // rỗng thật (hết lịch sử) — tối đa _kMaxHistoryWidenAttempts lần để
+      // không loop mãi nếu symbol thật sự chỉ có ít data.
+      var windowMultiplier = 1;
+      List<MarketKline> bars = const [];
+      for (var attempt = 0; attempt < _kMaxHistoryWidenAttempts; attempt++) {
+        final fromMs = toMs - windowMultiplier * ChartState.initialBatchSize * intervalMs;
+        bars = await fetchMarketHistory(
+          apiBaseUrl: MarketEnv.apiBaseUrl,
+          historyPath: MarketEnv.historyPath,
+          symbol: MarketEnv.symbol,
+          resolution: timeframe.restResolution,
+          period: timeframe.wsPeriod,
+          fromMs: fromMs,
+          toMs: toMs,
+        );
+        if (isClosed || state.timeframe != timeframe) return; // đã đổi khung khác
+        if (bars.length >= ChartState.initialBatchSize || bars.isEmpty) break;
+        windowMultiplier *= 4;
+      }
+      // Mở rộng có thể trả về nhiều hơn initialBatchSize (vd nhảy thẳng qua
+      // gap tới vùng dữ liệu dày) — cắt về đúng batch size mong muốn, giữ
+      // phần MỚI NHẤT (gần `toMs`).
+      if (bars.length > ChartState.initialBatchSize) {
+        bars = bars.sublist(bars.length - ChartState.initialBatchSize);
+      }
       await _withRecalcLock(() async {
         if (isClosed || state.timeframe != timeframe) return;
         var next = state.copyWith(

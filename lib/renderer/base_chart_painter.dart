@@ -7,9 +7,51 @@ import '../styles/k_chart_style.dart' show KChartStyle;
 import '../entity/k_line_entity.dart';
 import 'base_dimension.dart';
 
+/// Holder mutable cho bề rộng strip trục giá (CHART_AXES.md §7.6) — cache
+/// qua các frame dù painter bị recreate mỗi build (giống lý do dùng `static`
+/// trước đây cho [BaseChartPainter.maxScrollX]/`currentStartIndex`).
+///
+/// **KHÔNG dùng `static`** — sở hữu bởi `_KChartWidgetState` (field bền qua
+/// các lần `build()`), truyền xuống painter qua constructor. `static` nghĩa
+/// là TOÀN PROCESS dùng chung 1 giá trị — 2 `KChartWidget` vẽ đồng thời với
+/// độ rộng label giá khác nhau sẽ tranh chấp/nhấp nháy layout của nhau.
+/// Instance vẫn giữ được lợi ích "trễ 1 frame" (xem [BaseChartPainter.
+/// updatePriceAxisWidth]), chỉ khác chỗ sở hữu.
+class PriceAxisWidthCache {
+  /// Seed khớp default gợi ý trong CHART_AXES.md §7.6.
+  double value = 64.0;
+}
+
 /// BaseChartPainter
 abstract class BaseChartPainter extends CustomPainter {
   static double maxScrollX = 0.0;
+
+  /// Bề rộng strip trục giá bên phải, đọc từ [priceAxisWidthCache] (instance,
+  /// sở hữu bởi `_KChartWidgetState` — xem doc [PriceAxisWidthCache]).
+  /// [updatePriceAxisWidth] tính lại mỗi frame SAU khi biết label rộng nhất,
+  /// áp dụng cho frame KẾ TIẾP — layout luôn trễ đúng 1 frame so với nội dung
+  /// thật, tránh vòng lặp phản hồi width→plotW→visible range→price
+  /// range→label→width (FAILURE MODE 7) mà không cần biết trước label rộng
+  /// bao nhiêu.
+  double get priceAxisWidth => priceAxisWidthCache.value;
+  final PriceAxisWidthCache priceAxisWidthCache;
+
+  /// Planner tick trục thời gian — instance, cùng lý do sở hữu như
+  /// [priceAxisWidthCache] (xem doc `TimeTickPlanner`, `utils/time_ticks.dart`).
+  final TimeTickPlanner timeTickPlanner;
+
+  /// Áp §7.6: `clamp(maxLabelWidth + 14, 48, 96)`, làm tròn lên bội số 8, có
+  /// hysteresis — chỉ THU khi yêu cầu mới thấp hơn giá trị hiện tại ít nhất 1
+  /// bậc 8px trọn vẹn; PHÌNH thì áp ngay (label bị cắt còn tệ hơn 1 frame
+  /// rộng dư). Không hysteresis khi phình sẽ làm nhãn tràn ra ngoài panel lúc
+  /// giá đổi độ dài (vd 999→1000) trong đúng frame đó.
+  void updatePriceAxisWidth(double maxLabelWidth) {
+    final double raw = (maxLabelWidth + 14.0).clamp(48.0, 96.0);
+    final double required = (raw / 8.0).ceil() * 8.0;
+    if (required > priceAxisWidth || required <= priceAxisWidth - 8.0) {
+      priceAxisWidthCache.value = required;
+    }
+  }
 
   /// Bản sao static của [mStartIndex] sau lần `calculateValue()` gần nhất —
   /// cho phép `KChartWidget` (gesture handler) đọc "còn cách bao nhiêu nến
@@ -37,6 +79,24 @@ abstract class BaseChartPainter extends CustomPainter {
 
   late Rect mDateRect;
 
+  /// Strip trục giá bên phải (CHART_AXES.md §7) — main/vol/secondary đều vẽ
+  /// label giá trị của mình vào đây thay vì đè lên nội dung panel. Chiều cao
+  /// trùng khối plot (main→đáy panel cuối, KHÔNG gồm time axis) — mỗi
+  /// renderer tự cắt theo `chartRect.top/bottom` của nó để lấy đúng phần dọc.
+  late Rect mPriceAxisRect;
+
+  /// Ô chết góc dưới-phải (§7.4) — giao giữa strip giá và trục thời gian,
+  /// không thuộc trục nào. Chỉ tô nền để 2 đường phân cách kết thúc gọn,
+  /// không có nội dung khác.
+  late Rect mCornerRect;
+
+  /// Chiều rộng khối plot (nến + lưới + trục thời gian) = `mWidth -
+  /// priceAxisWidth` (§7.1). Dùng thay `mWidth` cho MỌI phép tính phụ thuộc
+  /// "cạnh phải màn hình" của khối plot — viewport, index range, tick trục
+  /// thời gian — nếu không dải index hiển thị sẽ tính lố vào phần bị strip
+  /// giá che khuất, làm lệch auto-scale giá (§7.1 cảnh báo đúng lỗi này).
+  late double mPlotWidth;
+
   /// Rectangle box of volume panel — null khi `volHidden = true`.
   Rect? mVolRect;
 
@@ -49,6 +109,12 @@ abstract class BaseChartPainter extends CustomPainter {
       mPaddingMainChild = 10.0;
   int mGridRows = 4, mGridColumns = 4;
   int mStartIndex = 0, mStopIndex = 0;
+
+  /// Tick trục thời gian đã chọn cho frame hiện tại — tính 1 lần trong
+  /// [calculateValue] rồi dùng chung bởi `drawDate` VÀ `drawGrid` của mọi
+  /// panel (main/vol/secondary), đảm bảo lưới dọc + label luôn thẳng hàng
+  /// (CHART_AXES.md I3, I6). Không renderer nào được tự chọn tick riêng.
+  List<({int index, double x, String label})> mTimeTicks = [];
 
   /// Vùng nến THẬT đang thực sự hiển thị trên màn hình — giao giữa viewport
   /// (`mStartIndex..mStopIndex`, có thể trỏ vào vùng tương lai) và dữ liệu
@@ -108,6 +174,8 @@ abstract class BaseChartPainter extends CustomPainter {
     required this.selectX,
     required this.xFrontPadding,
     required this.baseDimension,
+    required this.priceAxisWidthCache,
+    required this.timeTickPlanner,
     this.isOnTap = false,
     this.offsetY = 0.0,
     this.mainIndicators = const [],
@@ -150,19 +218,23 @@ abstract class BaseChartPainter extends CustomPainter {
       mFormats =
           chartStyle.dateTimeFormat ??
           (time >= 24 * 60 * 60 * 28 ? [yy, '-', mm] : [yy, '-', mm, '-', dd]);
-      mGridColumns = 4; // 5 mốc
     } else {
       // hour/minute line
       mFormats =
           chartStyle.dateTimeFormat ??
           [mm, '-', dd, ' ', hour24Padded, ':', nn];
-      mGridColumns = 3; // 4 mốc
     }
+    // mGridColumns không còn quyết định số lượng/label trục thời gian nữa —
+    // xem [_updateTimeTicks]/`TimeTickPlanner` (CHART_AXES.md §5). `mFormats`
+    // ở đây chỉ còn phục vụ label crosshair (`getDate` trong `ChartPainter`).
   }
 
   /// paint chart
   @override
   void paint(Canvas canvas, Size size) {
+    // §7.8 — layout pass đầu tiên / animation collapse có thể giao size 0.
+    // Vẽ garbage vào Rect âm/0 còn tệ hơn bỏ qua hẳn frame này.
+    if (size.width <= 0 || size.height <= 0) return;
     canvas.clipRect(Rect.fromLTRB(0, 0, size.width, size.height));
     mDisplayHeight = size.height - mTopPadding - mBottomPadding;
     mWidth = size.width;
@@ -228,12 +300,21 @@ abstract class BaseChartPainter extends CustomPainter {
 
   /// init the rectangle box to draw chart
   ///
-  /// Layout dọc (top → bottom):
+  /// Layout (CHART_AXES.md §7) — plot bên trái, strip giá bên phải, chia đôi
+  /// theo chiều rộng bởi [mPlotWidth]/[priceAxisWidth]; dọc (top → bottom)
+  /// trong khối plot:
   ///   mMainRect             — candles + main indicators
   ///   mVolRect              — vol panel (nếu volHidden = false)
   ///   mSecondaryRectList[i] — mỗi secondary indicator 1 panel
-  ///   mDateRect             — trục thời gian (đáy cùng)
+  ///   mDateRect             — trục thời gian (đáy cùng, rộng = mPlotWidth — R1)
+  ///   mPriceAxisRect        — cả cột bên phải, cao bằng main+vol+secondary
+  ///   mCornerRect           — ô chết dưới-phải, giao strip giá × trục thời gian
   void initRect(Size size) {
+    // §7.1: dùng width đã tính từ frame TRƯỚC (xem [priceAxisWidth] doc) —
+    // rồi cập nhật lại cho frame sau trong `ChartPainter.initChartRenderer`
+    // khi đã biết label rộng bao nhiêu.
+    mPlotWidth = max(1.0, mWidth - priceAxisWidth);
+
     double volHeight = baseDimension.mVolumeHeight;
     double secondaryHeight = baseDimension.mSecondaryHeight;
 
@@ -244,13 +325,18 @@ abstract class BaseChartPainter extends CustomPainter {
     // vol chart vẫn đủ chiều cao.
     if (!volHidden) mainHeight -= mPaddingMainChild;
 
-    mMainRect = Rect.fromLTRB(0, mTopPadding, mWidth, mTopPadding + mainHeight);
+    mMainRect = Rect.fromLTRB(
+      0,
+      mTopPadding,
+      mPlotWidth,
+      mTopPadding + mainHeight,
+    );
 
     if (!volHidden) {
       mVolRect = Rect.fromLTRB(
         0,
         mMainRect.bottom + mChildPadding + mPaddingMainChild,
-        mWidth,
+        mPlotWidth,
         mMainRect.bottom + mPaddingMainChild + volHeight,
       );
     } else {
@@ -266,7 +352,7 @@ abstract class BaseChartPainter extends CustomPainter {
           Rect.fromLTRB(
             0,
             secondaryTop + i * secondaryHeight + mChildPadding,
-            mWidth,
+            mPlotWidth,
             secondaryTop + i * secondaryHeight + secondaryHeight,
           ),
         ),
@@ -274,20 +360,35 @@ abstract class BaseChartPainter extends CustomPainter {
     }
 
     // Date rect ở đáy cùng — dưới panel cuối (vol/secondary) hoặc main nếu cả 2 ẩn.
+    // R1: rộng bằng đúng mPlotWidth, cùng x origin với plot — KHÔNG full mWidth.
     final double dateTop = mSecondaryRectList.isNotEmpty
         ? mSecondaryRectList.last.mRect.bottom
         : (mVolRect ?? mMainRect).bottom;
-    mDateRect = Rect.fromLTRB(0, dateTop, mWidth, dateTop + mBottomPadding);
+    mDateRect = Rect.fromLTRB(0, dateTop, mPlotWidth, dateTop + mBottomPadding);
+
+    // R2: strip giá cao bằng đúng khối plot (main→đáy panel cuối), cùng y
+    // origin — KHÔNG kéo dài xuống hết totalH (phần dưới là mCornerRect).
+    mPriceAxisRect = Rect.fromLTRB(mPlotWidth, mMainRect.top, mWidth, dateTop);
+    mCornerRect = Rect.fromLTRB(
+      mPlotWidth,
+      mDateRect.top,
+      mWidth,
+      mDateRect.bottom,
+    );
   }
 
   /// calculate values
   void calculateValue() {
+    mTimeTicks = [];
     if (datas == null) return;
     if (datas!.isEmpty) return;
     maxScrollX = getMinTranslateX().abs();
     setTranslateXFromScrollX(scrollX);
     mStartIndex = indexOfTranslateX(xToTranslateX(0));
-    mStopIndex = indexOfTranslateX(xToTranslateX(mWidth));
+    // mPlotWidth, không phải mWidth — cạnh phải thật của khối plot (§7.1);
+    // dùng mWidth ở đây sẽ tính dư index vào phần bị strip giá che khuất,
+    // làm lệch auto-scale giá (§6.2 đọc `firstVisible..lastVisible`).
+    mStopIndex = indexOfTranslateX(xToTranslateX(mPlotWidth));
     // mStartIndex có thể vượt mItemCount-1 khi cả viewport nằm trong vùng
     // tương lai (zoom sâu + scroll hết cỡ, xem mFutureSlots) — clamp để giữ
     // đúng cam kết "safe index" của field public này.
@@ -299,6 +400,7 @@ abstract class BaseChartPainter extends CustomPainter {
     mVisibleStopIndex = min(mStopIndex, mItemCount - 1);
     mRealStartIndex = max(0, mStartIndex - mFutureSlots);
     mRealStopIndex = min(mStopIndex + mFutureSlots, mItemCount - 1);
+    _updateTimeTicks();
 
     for (int i = mRealStartIndex; i <= mRealStopIndex; i++) {
       var item = datas![i];
@@ -323,6 +425,62 @@ abstract class BaseChartPainter extends CustomPainter {
         }
       }
     }
+  }
+
+  /// Chọn tick trục thời gian cho frame hiện tại (CHART_AXES.md §5) và chiếu
+  /// sang toạ độ màn hình bằng đúng 1 hàm transform đang dùng cho nến/lưới
+  /// (`translateXtoX(getX(index))`) — không tự bịa hệ toạ độ riêng (I2/I6).
+  ///
+  /// Kế hoạch chọn tick (`TimeTickPlanner`) được cache tĩnh theo
+  /// `(barSpacing, số nến, interval, format)` nên KHÔNG rebuild mỗi frame pan —
+  /// chỉ lọc lại theo PIXEL mỗi lần, rẻ vì kế hoạch vốn đã ngắn (đóng gói
+  /// theo MIN_GAP_X).
+  ///
+  /// Lọc đúng theo §5.2 "per-frame projection": chỉ giữ tick có `x` thật sự
+  /// nằm trong `[0, mPlotWidth]` (R1 — trục thời gian rộng bằng plot, không
+  /// phải cả mWidth, xem §7). KHÔNG lọc theo margin index (`mStartIndex±1`)
+  /// — 1 index dư ra khi barSpacing lớn có thể ứng với hàng chục px NGOÀI
+  /// màn hình, và `drawDate` chỉ kẹp TEXT (không kẹp gridline, đúng I6) nên
+  /// 1 tick off-screen lọt qua sẽ bị kẹp dính cứng vào mép trái/phải — trông
+  /// như "2 mốc bị hardcode" dù thật ra chỉ là tick sai vị trí lọt lưới.
+  void _updateTimeTicks() {
+    if (datas == null || datas!.isEmpty || mItemCount == 0) return;
+
+    final double barSpacing = mPointWidth * scaleX;
+    final int intervalMs = detectIntervalMs(datas!);
+    final List<TimeTick> plan = timeTickPlanner.getOrBuild(
+      candles: datas!,
+      barSpacing: barSpacing,
+      intervalMs: intervalMs,
+      forcedFormat: chartStyle.dateTimeFormat,
+    );
+
+    final ticks = <({int index, double x, String label})>[];
+    for (final t in plan) {
+      if (t.index < 0 || t.index >= mItemCount) continue;
+      final double x = translateXtoX(getX(t.index));
+      if (x < 0 || x > mPlotWidth) continue;
+      ticks.add((index: t.index, x: x, label: t.label));
+    }
+
+    if (ticks.isEmpty) {
+      // Fallback B (§5.2) — kế hoạch không có tick nào rơi vào viewport hiện
+      // tại (vd zoom rất sâu trên dataset nhỏ): vẫn hiện đúng 1 tick tại nến
+      // giữa màn hình, trục không bao giờ trống.
+      final int mid = indexOfTranslateX(
+        xToTranslateX(mPlotWidth / 2),
+      ).clamp(0, mItemCount - 1);
+      ticks.add((
+        index: mid,
+        x: translateXtoX(getX(mid)),
+        label: labelForCandle(
+          datas![mid],
+          forcedFormat: chartStyle.dateTimeFormat,
+        ),
+      ));
+    }
+
+    mTimeTicks = ticks;
   }
 
   /// max/min cho panel volume.
@@ -449,13 +607,15 @@ abstract class BaseChartPainter extends CustomPainter {
   }
 
   double get _effectiveRightPaddingPx =>
-      effectiveRightPaddingPx(xFrontPadding, mWidth);
+      effectiveRightPaddingPx(xFrontPadding, mPlotWidth);
 
   /// get the minimum value of translation
   double getMinTranslateX() {
     // paddingData: px → data space (/ scaleX) để gap màn hình ≈ _effectiveRightPaddingPx khi pinch zoom.
+    // mPlotWidth, không phải mWidth — nến cuối phải cách MÉP PLOT (không phải
+    // mép strip giá) đúng khoảng padding này (§7.1).
     final paddingData = _effectiveRightPaddingPx / scaleX;
-    var x = -mDataLen + mWidth / scaleX - mPointWidth / 2 - paddingData;
+    var x = -mDataLen + mPlotWidth / scaleX - mPointWidth / 2 - paddingData;
     return x >= 0 ? 0.0 : x;
   }
 

@@ -837,9 +837,12 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
       showNowPrice: true,
       showInfoDialog: true,
       mBaseHeight: 280,
+      // Chọn phút/giờ (15m, 1H, 4H) → luôn hiện ngày-tháng giờ:phút; chọn
+      // ngày (1D) → luôn hiện ngày-tháng-năm. Ép cố định theo khung đang
+      // chọn, không dùng thuật toán thích ứng theo zoom của CHART_AXES.md.
       timeFormat: state.timeframe == ChartTimeframe.d1
-          ? TimeFormat.yearMonthDay
-          : TimeFormat.yearMonthDayWithHour,
+          ? const [dd, '-', mm, '-', yyyy]
+          : const [dd, '-', mm, ' ', hour24Padded, ':', nn],
       onLoadMore: (isLeft) =>
           context.read<ChartBloc>().add(ChartMoreDataRequested(isLeft)),
       isLoadingMore: state.isFetching,

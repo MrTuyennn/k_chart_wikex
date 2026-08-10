@@ -7,6 +7,12 @@ class KLineEntity extends KEntity {
   double? ratio;
   int? time;
 
+  /// Cache nội bộ cho time-tick planner (`lib/utils/time_ticks.dart`) — mức độ
+  /// "đáng chú ý theo lịch" của nến này (đầu giờ/ngày/tháng/năm), tính 1 lần
+  /// rồi giữ nguyên, không tính lại mỗi frame. `null` = chưa tính. Không dùng
+  /// cho mục đích nào khác ngoài vẽ trục thời gian.
+  int? tickWeight;
+
   KLineEntity.fromCustom({
     this.amount,
     required double open,

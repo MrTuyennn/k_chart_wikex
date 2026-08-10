@@ -45,6 +45,9 @@ class ChartPainter extends BaseChartPainter {
   late Paint paintCross, selectPointPaint, selectorBorderPaint;
   late Paint nowPriceLinePaint;
   late Paint _bgPaint;
+  /// Viền khung phân cách plot | price-axis-strip | time-axis (§7.5) — tách
+  /// riêng khỏi `gridPaint` của từng renderer (chỉ dùng nội bộ panel đó).
+  late Paint gridSeparatorPaint;
   late Paint _trendLinePaint, _trendLineStrokePaint, _trendLineSegmentPaint;
   final bool hideGrid;
   final bool showNowPrice;
@@ -69,6 +72,8 @@ class ChartPainter extends BaseChartPainter {
     required super.selectX,
     required super.xFrontPadding,
     required super.baseDimension,
+    required super.priceAxisWidthCache,
+    required super.timeTickPlanner,
     super.isOnTap,
     super.isTapShowInfoDialog,
     required this.verticalTextAlignment,
@@ -95,6 +100,10 @@ class ChartPainter extends BaseChartPainter {
       ..style = PaintingStyle.stroke
       ..color = chartColors.selectBorderColor;
 
+    gridSeparatorPaint = Paint()
+      ..color = chartColors.gridColor
+      ..strokeWidth = 0.5
+      ..isAntiAlias = true;
     nowPriceLinePaint = Paint()
       ..strokeWidth = chartStyle.nowPriceLineWidth
       ..isAntiAlias = true;
@@ -120,12 +129,21 @@ class ChartPainter extends BaseChartPainter {
   TextStyle getTextStyle(Color color) =>
       resolveTextStyle(chartColors.candleStyle.textStyle, color);
 
+  /// Headroom trên/dưới dải giá hiển thị (CHART_AXES.md §6.2) — không có phần
+  /// đệm này, nến cao/thấp nhất chạm sát mép panel. Chỉ áp cho DẢI hiển thị
+  /// (đưa vào `MainRenderer`); `mMainMaxValue`/`mMainMinValue` gốc (annotation
+  /// max/min, kẹp now-price) giữ nguyên giá trị thật, không bị pad.
+  static const double _kPricePadFraction = 0.08;
+
   @override
   void initChartRenderer() {
+    final double priceRange = mMainMaxValue - mMainMinValue;
+    final double pricePad = priceRange > 0 ? priceRange * _kPricePadFraction : 0;
     mMainRenderer = MainRenderer(
       mMainRect,
-      mMainMaxValue,
-      mMainMinValue,
+      mPriceAxisRect,
+      mMainMaxValue + pricePad,
+      mMainMinValue - pricePad,
       mTopPadding,
       mainIndicators,
       isLine,
@@ -142,6 +160,7 @@ class ChartPainter extends BaseChartPainter {
     if (mVolRect != null) {
       mVolRenderer = VolRenderer(
         mVolRect!,
+        mPriceAxisRect,
         mVolMaxValue,
         mVolMinValue,
         mChildPadding,
@@ -157,6 +176,7 @@ class ChartPainter extends BaseChartPainter {
       mSecondaryRendererList.add(
         SecondaryRenderer(
           mSecondaryRectList[i].mRect,
+          mPriceAxisRect,
           mSecondaryRectList[i].mMaxValue,
           mSecondaryRectList[i].mMinValue,
           mChildPadding,
@@ -167,40 +187,80 @@ class ChartPainter extends BaseChartPainter {
         ),
       );
     }
+
+    // §7.6 — đo label rộng nhất SAU khi biết tick giá thật, áp cho frame kế
+    // tiếp (xem doc [priceAxisWidth]/[PriceAxisWidthCache]). Chỉ đo panel giá
+    // chính (số dài/nhiều thập phân nhất, quyết định độ rộng strip).
+    updatePriceAxisWidth(
+      (mMainRenderer as MainRenderer).measureMaxLabelWidth(
+        getTextStyle(chartColors.defaultTextColor),
+      ),
+    );
   }
 
   @override
   void drawBg(Canvas canvas, Size size) {
     if (skipBg) return;
+    // mWidth, không phải mMainRect.width/... — các rect panel giờ chỉ rộng
+    // bằng mPlotWidth (§7), nhưng nền phải phủ hết TOÀN BỘ canvas kể cả strip
+    // giá bên phải, nếu không strip sẽ trông như 1 khoảng trống trong suốt.
     canvas.drawRect(
-      Rect.fromLTRB(0, 0, mMainRect.width, mMainRect.height + mTopPadding),
+      Rect.fromLTRB(0, 0, mWidth, mMainRect.height + mTopPadding),
       _bgPaint,
     );
     if (mVolRect != null) {
       canvas.drawRect(
-        Rect.fromLTRB(0, mMainRect.bottom, mVolRect!.width, mVolRect!.bottom),
+        Rect.fromLTRB(0, mMainRect.bottom, mWidth, mVolRect!.bottom),
         _bgPaint,
       );
     }
     for (int i = 0; i < mSecondaryRectList.length; ++i) {
       final r = mSecondaryRectList[i].mRect;
       canvas.drawRect(
-        Rect.fromLTRB(0, r.top - mChildPadding, r.width, r.bottom),
+        Rect.fromLTRB(0, r.top - mChildPadding, mWidth, r.bottom),
         _bgPaint,
       );
     }
+    // mDateRect + mCornerRect riêng (không gộp thành 1 rect full-width) để
+    // giữ nguyên mDateRect đúng nghĩa "chỉ rộng bằng plot" (R1) cho các chỗ
+    // khác đang dùng nó — ở đây chỉ cần tô nền, ghép 2 rect là đủ, không cần
+    // đổi field.
     canvas.drawRect(mDateRect, _bgPaint);
+    canvas.drawRect(mCornerRect, _bgPaint);
   }
 
   @override
   void drawGrid(canvas) {
     if (!hideGrid) {
-      mMainRenderer.drawGrid(canvas, mGridRows, mGridColumns);
-      mVolRenderer?.drawGrid(canvas, mGridRows, mGridColumns);
+      // Cùng 1 danh sách x cho cả 3 panel — lưới dọc luôn thẳng hàng dù số
+      // lượng/vị trí tick thay đổi theo zoom (CHART_AXES.md I6).
+      final verticalXs = mTimeTicks.map((t) => t.x).toList();
+      mMainRenderer.drawGrid(canvas, mGridRows, verticalXs);
+      mVolRenderer?.drawGrid(canvas, mGridRows, verticalXs);
       for (final element in mSecondaryRendererList) {
-        element.drawGrid(canvas, mGridRows, mGridColumns);
+        element.drawGrid(canvas, mGridRows, verticalXs);
       }
     }
+    _drawAxisSeparators(canvas);
+  }
+
+  /// 2 đường phân cách khung (§7, §7.5 z-order bước 4) — KHÔNG phụ thuộc
+  /// `hideGrid` (đây là viền khung, không phải lưới giá/thời gian):
+  ///  - dọc tại `mPlotWidth`, cao hết plot+strip giá+trục thời gian
+  ///    (main→đáy `mDateRect`) — ranh giới plot | price axis (R2).
+  ///  - ngang tại đỉnh `mDateRect`, rộng hết `mWidth` — ranh giới
+  ///    {plot,price axis} | {time axis, corner} (R1).
+  void _drawAxisSeparators(Canvas canvas) {
+    canvas.drawLine(
+      Offset(mPlotWidth, mMainRect.top),
+      Offset(mPlotWidth, mDateRect.bottom),
+      gridSeparatorPaint,
+    );
+    canvas.drawLine(
+      Offset(0, mDateRect.top),
+      Offset(mWidth, mDateRect.top),
+      gridSeparatorPaint,
+    );
   }
 
   @override
@@ -305,22 +365,18 @@ class ChartPainter extends BaseChartPainter {
   void drawDate(Canvas canvas, Size size) {
     if (datas == null) return;
 
-    double columnSpace = size.width / mGridColumns;
-    double startX = getX(mStartIndex) - mPointWidth / 2;
-    double stopX = getX(mStopIndex) + mPointWidth / 2;
-    double x = 0.0;
-    double y = 0.0;
-
-    for (var i = 0; i <= mGridColumns; ++i) {
-      double translateX = xToTranslateX(columnSpace * i);
-      if (translateX < startX || translateX > stopX) continue;
-
-      int index = indexOfTranslateX(translateX);
-      TextPainter tp = getTextPainter(getDate(timeAt(index)), null);
-      y = mDateRect.top + (mBottomPadding - tp.height) / 2;
-      x = columnSpace * i - tp.width / 2;
+    // Tick đã được BaseChartPainter chọn 1 lần/frame (weight ladder,
+    // CHART_AXES.md §5) — ở đây chỉ vẽ, không tự chọn tick (I3).
+    for (final tick in mTimeTicks) {
+      TextPainter tp = getTextPainter(tick.label, null);
+      double y = mDateRect.top + (mBottomPadding - tp.height) / 2;
+      // Kẹp phần TEXT vào trong màn hình, KHÔNG kẹp đường lưới — giữ đúng I6
+      // (line và label vẫn cùng 1 toạ độ gốc, chỉ text được dịch để không tràn mép).
+      // mPlotWidth, không phải size.width — trục thời gian rộng bằng plot,
+      // không lấn sang strip giá (R1, §7).
+      double x = tick.x - tp.width / 2;
       if (x < 0) x = 0;
-      if (x > size.width - tp.width) x = size.width - tp.width;
+      if (x > mPlotWidth - tp.width) x = mPlotWidth - tp.width;
       tp.paint(canvas, Offset(x, y));
     }
   }
@@ -433,7 +489,7 @@ class ChartPainter extends BaseChartPainter {
     //plot maxima and minima
     double x = translateXtoX(getX(mMainMinIndex));
     double y = _applyScaleY(getMainY(mMainLowMinValue));
-    if (x < mWidth / 2) {
+    if (x < mPlotWidth / 2) {
       //draw right
       TextPainter tp = getTextPainter(
         "── ${NumberUtil.formatFixed(mMainLowMinValue, fixedLength) ?? ''}",
@@ -449,7 +505,7 @@ class ChartPainter extends BaseChartPainter {
     }
     x = translateXtoX(getX(mMainMaxIndex));
     y = _applyScaleY(getMainY(mMainHighMaxValue));
-    if (x < mWidth / 2) {
+    if (x < mPlotWidth / 2) {
       //draw right
       TextPainter tp = getTextPainter(
         "── ${NumberUtil.formatFixed(mMainHighMaxValue, fixedLength) ?? ''}",

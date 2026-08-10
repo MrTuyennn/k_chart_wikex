@@ -30,6 +30,25 @@
 
 ### Unreleased
 
+- **perf/fix (từ `/code-review` trên diff trục X/Y):** 4 vấn đề phát hiện qua code review — 2 performance, 2 correctness — đều đã sửa, KHÔNG đổi thuật toán/output hiển thị đã chốt ở bullet bên dưới, không đụng indicator nào.
+  - **perf — cache tick thời gian rescan toàn dataset gần như mỗi frame lúc pinch-zoom:** `TimeTickPlanner`'s cache key có `barSpacing` dạng số thực, đổi liên tục theo `scaleX` trong lúc zoom → cache-miss gần như mỗi frame → rebuild lại `buildTimeTickPlan` trên TOÀN BỘ dataset (alloc `DateTime`/nến trong `_assignTickWeights`), đúng lúc cần mượt nhất. Sửa: làm tròn `barSpacing` về px nguyên CHỈ trong cache key (giá trị chính xác vẫn dùng để build khi thật sự rebuild) — sai lệch dưới 1px không đổi tick nào được chọn trong thực tế (`SURPLUS=4` ở threshold đã chừa biên an toàn).
+  - **perf — `MainRenderer.measureMaxLabelWidth` dựng lại `TextPainter` + `layout()` mỗi frame** dù range giá/style không đổi. Sửa: thêm `_priceLabelCache` (`static final Map<(String, TextStyle), TextPainter>`, an toàn dùng chung process vì là hàm THUẦN của input) — dùng lại cho cả `measureMaxLabelWidth` lẫn `drawVerticalText`. Đúng khuyến nghị "Cache laid-out text by (string, colour, size, weight)" ở CHART_AXES.md §8.
+  - **fix — cache tick thời gian có thể trả nhầm data khi đổi symbol/timeframe:** cache key cũ (`barSpacing, length, interval, format`) không phụ thuộc identity/nội dung data — đổi sang dataset trùng shape (cùng số nến, cùng interval) tái dùng NHẦM plan cũ, hiện sai nhãn ngày cho tới khi zoom lại. Sửa: thêm `identityHashCode(candles)` vào key.
+  - **fix — `priceAxisWidth` + cache `TimeTickPlanner` là `static`, rò rỉ giữa nhiều `KChartWidget` vẽ đồng thời** (watchlist mini-chart, so sánh nhiều symbol — code tự thừa nhận giả định "1 chart active" nhưng không guard). Sửa: bỏ `static`, chuyển thành field instance sở hữu bởi `_KChartWidgetState` (`PriceAxisWidthCache _priceAxisWidthCache`, `TimeTickPlanner _timeTickPlanner` — bền qua các lần `build()` giống `mScaleX`/`mScrollX`), truyền xuống `BaseChartPainter`/`ChartPainter` qua constructor (2 param mới, required). **Breaking** cho ai tự implement `BaseChartPainter` bên ngoài package. `BaseChartPainter.priceAxisWidth`/`updatePriceAxisWidth` trong bullet gốc bên dưới, cũng như `TimeTickPlanner.getOrBuild`, từ nay là **instance member**, không còn gọi qua tên class.
+  - File: `lib/utils/time_ticks.dart`, `lib/renderer/base_chart_painter.dart`, `lib/renderer/chart_painter.dart`, `lib/renderer/main_renderer.dart`, `lib/k_chart_widget.dart`
+- **feat (breaking — thiết kế lại trục X/Y):** Viết lại toàn bộ cơ chế trục thời gian + trục giá theo spec `CHART_AXES.md` (file mới ở root repo, tự chứa — đọc trực tiếp nếu cần công thức chính xác thay vì suy từ code). Đây là thay đổi lớn nhất kể từ khi thêm Ichimoku, thay hẳn cơ chế "chia đều pixel theo `mGridColumns`" cũ mô tả ở [10.4](#104-auto-detect-time-format--grid-alignment) (bản cũ) bằng 2 module thuần độc lập test được: `lib/utils/time_ticks.dart` (trục X) + `lib/utils/price_ticks.dart` (trục Y). Xem lại [10.4](#104-time-tick-planner--price-ticks-trục-xy) và [12](#12-renderer-internals) (đã viết lại) để biết chi tiết hiện tại.
+  - **Trục X — weight ladder thay vì chia cột đều:** Mỗi nến được gán 1 `tickWeight` (int, cache 1 lần lúc load — `MINOR..YEAR`, 12 bậc) dựa trên việc nó có rơi đúng ranh giới lịch (đầu giờ/ngày/tháng/năm, theo **local time**) hay không. Mỗi frame, `BaseChartPainter._updateTimeTicks()` chọn threshold-bậc từ hình học thuần (`barSpacing`, `interval` — KHÔNG đếm số nến hiển thị, tránh nhấp nháy), lọc + đóng gói ứng viên theo `MIN_GAP_X=64px` trên **absolute space** (loại `scrollOffset` — pan không đổi tick nào được chọn), rồi lọc lại theo pixel thật `x ∈ [0, mPlotWidth]`. Kết quả cache tĩnh (`TimeTickPlanner`, theo `(barSpacing, count, interval, format)`) — chỉ rebuild khi zoom/data đổi, KHÔNG rebuild mỗi frame pan.
+  - **Trục Y — nice-number thay vì chia đều `gridRows`:** `lib/utils/price_ticks.dart` sinh tick theo ladder `1·2·2.5·5·10 × 10^n` (`niceStep`), số chữ số thập phân suy từ chính `step` (`decimalsFor` — KHÔNG suy từ magnitude, sai với họ `2.5`). `MainRenderer` tính lại `_priceTicks` mỗi frame từ **range giá đang thực sự hiển thị** (đã áp gesture zoom/pan dọc `mScaleY`/`offsetY` — hàm nghịch đảo `_priceAtScreenY`, xem bullet fix bên dưới), không phải range gốc.
+  - **Layout — price axis tách strip riêng bên phải** (đúng CHART_AXES.md §7, trước đây label giá vẽ ĐÈ lên nến/cột vol/indicator): `BaseChartPainter` thêm `mPlotWidth`/`mPriceAxisRect`/`mCornerRect`; mọi rect panel (main/vol/secondary/date) giờ chỉ rộng `mPlotWidth = mWidth - priceAxisWidth`, không còn full `mWidth`. `priceAxisWidth` (`static`, cache qua frame giống `maxScrollX`) tự đo theo label rộng nhất, clamp `[48,96]`, làm tròn bội 8, có hysteresis (chỉ thu khi thấp hơn hẳn 1 bậc — chống vòng lặp phản hồi width→layout→label→width). 13 file indicator (MACD/KDJ/RSI/...) **không phải sửa** — `SecondaryRenderer` dùng `canvas.translate` để giữ nguyên công thức `chartRect.width - x` (giả định local x=0) của chúng dù giờ vẽ vào 1 rect có `left != 0`.
+  - **Gesture:** vùng kéo dọc để scaleY + double-tap reset (trước đồng bộ với `xFrontPadding`/`effectiveRightPaddingPx` — vốn là padding SAU nến cuối, không liên quan) giờ dùng đúng `BaseChartPainter.priceAxisWidth` (bề rộng strip thật đang vẽ). Kèm 1 fix: `mMainRect` hẹp lại (không phủ strip giá) khiến `isInMainRect` trả `false` khi chạm strip → nhánh "outside main, forward outer scroll" nuốt mất gesture scaleY hợp lệ; sửa bằng cách loại trừ `_isScaleYGesture` khỏi điều kiện đó — xem [13.3](#133-scale).
+  - File: `CHART_AXES.md` (mới), `lib/utils/time_ticks.dart` (mới), `lib/utils/price_ticks.dart` (mới), `lib/entity/k_line_entity.dart` (`tickWeight` field), `lib/renderer/base_chart_painter.dart`, `lib/renderer/base_chart_renderer.dart`, `lib/renderer/chart_painter.dart`, `lib/renderer/main_renderer.dart`, `lib/renderer/vol_renderer.dart`, `lib/renderer/secondary_renderer.dart`, `lib/k_chart_widget.dart`, `lib/utils/index.dart`, `test/time_ticks_test.dart` (mới), `test/price_ticks_test.dart` (mới)
+- **fix:** Label trục thời gian bị "dính cứng" ở 2 đầu mép trái/phải khi zoom vào — trông như hardcode. Nguyên nhân: `_updateTimeTicks()` lọc tick theo margin **index** (`mStartIndex±1`) thay vì theo **pixel** thật; 1 index dư ra khi `barSpacing` lớn có thể ứng với hàng chục px NGOÀI màn hình, và `drawDate()` chỉ kẹp TEXT (không kẹp gridline, đúng invariant I6 của CHART_AXES.md) nên label của tick off-screen đó bị kẹp dính vào mép. Sửa: lọc nghiêm ngặt theo `x ∈ [0, mPlotWidth]` — đúng thuật toán `ticksFor()` §5.2 của spec.
+  - File: `lib/renderer/base_chart_painter.dart`
+- **fix:** Tick trục giá không thích ứng theo gesture zoom dọc (`mScaleY`/`offsetY`) — trước đây tính 1 lần từ `minValue`/`maxValue` GỐC (auto-scale theo data thật), gesture chỉ áp transform lên toạ độ VẼ chứ không tính lại tick, nên zoom Y thu nhỏ thì hầu hết tick cũ dạt ra ngoài view, còn lại rất ít label. Sửa: thêm `MainRenderer._priceAtScreenY()` — nghịch đảo CHÍNH XÁC transform canvas thật `ChartPainter.drawChart` dùng cho nến (`translate(0, centerY*(1-scaleY)+offsetY); scale(1.0, scaleY)`), dùng nó tính range giá đang THỰC SỰ hiển thị rồi sinh tick nice-number theo range đó — tick "ảo" (không nhất thiết trùng giá nến thật) luôn lấp đầy trục dù zoom tới đâu.
+  - File: `lib/renderer/main_renderer.dart`
+- **fix (example app):** REST fetch lịch sử nến (`ChartBloc._loadHistory`) trả về ÍT hơn hẳn `initialBatchSize` khi sàn có gap/downtime gần "hiện tại" (gặp thật ở symbol demo, khung 15m — gap ~2 ngày ngay trước hiện tại khiến cửa sổ mặc định 200 nến chỉ nhận được ~46, dù mở rộng cửa sổ ra sẽ thấy data vẫn còn rất nhiều xa hơn). App trước đó chấp nhận bất kỳ số nến nào trả về, khiến chart trông như "chỉ scroll được 1 page". Sửa: nếu lần fetch đầu không đủ `initialBatchSize` mà server CHƯA trả rỗng (còn lịch sử xa hơn), tự động mở rộng cửa sổ lùi xa hơn (×4 mỗi lần, tối đa 4 lần ≈ phủ 256x cửa sổ gốc) rồi thử lại; tìm đủ thì cắt về đúng `initialBatchSize` nến mới nhất.
+  - File: `example/lib/bloc/chart_bloc.dart`
+- **implement rồi revert theo yêu cầu (ghi lại để khỏi làm lại nhầm):** CHART_AXES.md §6.6 (instrument tick size — step trục giá không mịn hơn tick size sàn cho phép) và §6.7 (drawing the price strip — occlusion giữa label thường/last-price tag/crosshair tag, "drop rather than drag" khi label lệch vị trí thật, tabular figures, `exp`-based vertical drag scale+lock) đã được implement đầy đủ kèm test T9-T12, sau đó **revert toàn bộ** theo yêu cầu — không còn trong code hiện tại. `CHART_AXES.md` hiện tại cũng không còn 2 mục này. §5.3 (label text theo weight) cũng revert về đúng format gốc của spec (`"2026"/"Aug"/"10"/"09:05"`) sau khi từng đổi sang `DD-MM HH:MM`/`YYYY-MM-DD` theo 1 yêu cầu khác đã bị huỷ.
 - **feat (thêm lại sau revert):** `IchimokuIndicator` (Ichimoku Kinko Hyo) — main indicator, thêm lại theo yêu cầu sau khi đã revert hoàn toàn ở mục "revert" bên dưới (07-18). Lần này dựng lại từ đầu với cơ chế đơn giản hơn bản V2 cũ (1 property `futureShift` thay vì 3 hook `requiredFutureBars`/`getFutureMaxMinValue`/`drawFutureSegment`). Xem chi tiết công thức/API tại [9.2](#92-built-in-indicators) và cơ chế renderer dùng chung tại [12](#12-renderer-internals) mục "Vùng tương lai".
   - `calcParams: [9, 26, 52]` (tenkanPeriod, kijunPeriod, spanBPeriod) — bộ cổ điển; `shift` LUÔN = `calcParams[1]` (kijun period), không hardcode `26`.
   - 5 đường: Tenkan/Kijun (vẽ tại index gốc, không dịch), Senkou Span A/B (dịch **tới trước** `shift` nến), Chikou (dịch **lùi** `shift` nến, = `close`, không lưu field riêng). Mây (Kumo) tô giữa Span A/B, tách polygon tại điểm giao (nội suy tuyến tính) để đổi màu đúng đoạn tăng/giảm.
@@ -181,11 +200,11 @@ KChartWidget  (state + gesture)
    ├─ backgroundLogo (IgnorePointer, Center)  ← watermark giữa main rect
    ├─ CustomPaint(painter: ChartPainter)
    │   └─ ChartPainter.paint()
-   │       ├─ initRect()              → mMainRect, mVolRect?, mDateRect, mSecondaryRectList[]
-   │       ├─ calculateValue()        → mStartIndex/mStopIndex + max/min
-   │       ├─ initChartRenderer()     → mMainRenderer + mVolRenderer? + mSecondaryRendererList[]
-   │       ├─ drawBg()                (skip nếu skipBg)
-   │       ├─ drawGrid()
+   │       ├─ initRect()              → mPlotWidth, mMainRect, mVolRect?, mDateRect, mSecondaryRectList[], mPriceAxisRect, mCornerRect
+   │       ├─ calculateValue()        → mStartIndex/mStopIndex (theo mPlotWidth) + max/min + mTimeTicks (weight-ladder planner, CHART_AXES.md §5)
+   │       ├─ initChartRenderer()     → mMainRenderer + mVolRenderer? + mSecondaryRendererList[] (đều nhận priceAxisRect) + đo lại priceAxisWidth cho frame SAU (§7.6)
+   │       ├─ drawBg()                (skip nếu skipBg; phủ cả strip giá + ô góc chết)
+   │       ├─ drawGrid()              (theo mTimeTicks dùng chung + _priceTicks mỗi panel) + 2 đường phân cách khung (§7.5)
    │       ├─ drawChart()
    │       │   ├─ canvas: translate(mTranslateX*scaleX) + scale(scaleX, 1)
    │       │   ├─ scaleY scope:
@@ -197,13 +216,13 @@ KChartWidget  (state + gesture)
    │       │   │   ├─ mVolRenderer?.drawChart()
    │       │   │   └─ for each SecondaryRenderer.drawChart()
    │       │   └─ drawCrossLine / drawTrendLines
-   │       ├─ drawVerticalText()       (main + vol + secondaries)
-   │       ├─ drawDate()
+   │       ├─ drawVerticalText()       (main + vol + secondaries — vẽ vào mPriceAxisRect, không đè lên nội dung panel nữa)
+   │       ├─ drawDate()               (kẹp text theo mPlotWidth, không phải full mWidth)
    │       ├─ drawText(getItem(mStopIndex))    (main + vol + secondaries)
    │       ├─ drawMaxAndMin() / drawNowPrice()     (qua _applyScaleY)
-   │       └─ drawCrossLineText() (nếu long-press/tap)
-   └─ Positioned (right:0) + LayoutBuilder → w = effectiveRightPaddingPx
-       ─ vùng gesture scaleY + double-tap reset scaleY/offsetY
+   │       └─ drawCrossLineText() (nếu long-press/tap — span cả mWidth, KHÔNG bị giới hạn mPlotWidth, xem CHART_AXES.md §7.5)
+   └─ Positioned (right:0) + LayoutBuilder → w = BaseChartPainter.priceAxisWidth
+       ─ vùng gesture scaleY + double-tap reset scaleY/offsetY (khớp đúng strip giá đang vẽ, §7.7)
 ```
 
 ### Flow dữ liệu
@@ -218,9 +237,10 @@ KChartWidget  (state + gesture)
 
 - **Widget quản lý trạng thái + gesture, painter vẽ toàn bộ.**
 - **Một `CustomPaint`** cho main chart; secondary indicators KHÔNG phải widget riêng.
-- **Tính min/max chỉ trên vùng dữ liệu visible** (`mStartIndex..mStopIndex`).
+- **Tính min/max chỉ trên vùng dữ liệu visible** (`mStartIndex..mStopIndex`, tính theo `mPlotWidth` — KHÔNG phải `mWidth`, xem [12](#12-renderer-internals) "Price axis strip").
 - **`scrollX` và `scaleX` thành phép biến đổi canvas**, không vẽ tay từng phần.
 - **`scaleY` áp riêng cho main**, secondary nằm ngoài transform để không bị giãn.
+- **Tick trục X/Y tính lại mỗi frame theo layer riêng** (`BaseChartPainter._updateTimeTicks()` cho X, `MainRenderer` constructor cho Y) — renderer con không tự chọn tick, chỉ vẽ danh sách đã tính sẵn. Chi tiết đầy đủ ở `CHART_AXES.md` + [10.4](#104-time-tick-planner--price-ticks-trục-xy).
 - **Mọi label vẽ ngoài canvas transform** phải đi qua `_applyScaleY(rawY)`.
 
 ---
@@ -638,11 +658,25 @@ File: `lib/k_chart_widget.dart`.
 | `backgroundLogo`        | `null`  | Widget overlay ở giữa main chart. Có `IgnorePointer` nội bộ. |
 | `backgroundLogoOpacity` | `1.0`   | 0.0 ẩn — 1.0 hiện đầy đủ.                                    |
 
-### 6.7 `TimeFormat` constants
+### 6.7 `TimeFormat` constants & ép format nhãn trục thời gian
 
 ```dart
 TimeFormat.yearMonthDay         // yyyy-MM-dd
 TimeFormat.yearMonthDayWithHour // yyyy-MM-dd HH:mm
+```
+
+`KChartWidget.timeFormat` (`List<String>?`, mặc định `null`) — ép format này cho **MỌI** tick trục X + label crosshair, bất kể `tickWeight`, bỏ qua hẳn thuật toán thích ứng ở [10.4](#104-time-tick-planner--price-ticks-trục-xy). `null` (mặc định) = giữ hành vi thích ứng (format tự đổi theo mức zoom — "10" ở ranh giới ngày, "09:05" giữa ngày, ...).
+
+> **Trước đây field này KHÔNG có tác dụng gì** — khai báo nhưng chưa từng được đọc ở đâu trong pipeline vẽ (bug tồn tại từ trước, phát hiện + sửa khi viết lại trục thời gian, xem Unreleased). Giờ nó được nối vào `chartStyle.dateTimeFormat` (field THẬT SỰ chạy tới `BaseChartPainter._updateTimeTicks`/`initFormats`) ngay trong `KChartWidget.build()`, ưu tiên `chartStyle.dateTimeFormat` nếu cả 2 cùng được set.
+
+```dart
+KChartWidget(
+  data, style, colors,
+  timeFormat: timeframe == d1
+      ? const [dd, '-', mm, '-', yyyy]           // luôn "10-08-2026"
+      : const [dd, '-', mm, ' ', hour24Padded, ':', nn], // luôn "10-08 14:30"
+  // ...
+)
 ```
 
 ---
@@ -1120,20 +1154,31 @@ class MyIndicator extends MainIndicator<CandleEntity, MyStyle> {
 
 **Cache label ngày (`ChartPainter.getDate`):** kết quả `dateFormat()` được cache trong `static Map<int, String> _dateStringCache` (key = timestamp) để tránh format lại mỗi frame. Cache bị clear khi `mFormats` đổi — so sánh **theo nội dung** (`_formatsEqual`, so từng phần tử), KHÔNG theo reference, vì `initFormats()` gán 1 list literal mới mỗi lần `ChartPainter` được dựng lại (mỗi build) dù nội dung format không đổi; so theo reference sẽ khiến cache bị xoá gần như mỗi frame và mất tác dụng.
 
-### 10.4 Auto-detect time format & grid alignment
+### 10.4 Time-tick planner & price ticks (trục X/Y)
 
-`initFormats()` trong `BaseChartPainter` tự chọn format **và** override `mGridColumns` dựa vào khoảng cách giữa 2 candle đầu:
+> **Thay thế hoàn toàn** cơ chế cũ ("Auto-detect time format & grid alignment" — chia đều `mGridColumns` cột, format chọn theo khoảng cách 2 candle đầu). Bản cũ có 1 nhược điểm cố hữu: số lượng/vị trí label KHÔNG đổi theo `barSpacing` (zoom) trong 1 phiên — chỉ đổi khi `ChartPainter` được dựng lại với data mới. Bản mới (theo `CHART_AXES.md`, spec tự chứa — đọc file đó nếu cần công thức chính xác) tính lại tick **mỗi frame** theo đúng mức zoom hiện tại. `mGridColumns`/`gridColumns` không còn quyết định gì cho trục thời gian nữa.
 
-| Khoảng cách          | Format        | `mGridColumns`           | Số mốc |
-| -------------------- | ------------- | ------------------------ | ------ |
-| ≥ 28 ngày (monthly)  | `yy-MM`       | 4                        | 5      |
-| ≥ 1 ngày (daily)     | `yy-MM-dd`    | 4                        | 5      |
-| Intraday (phút/giờ)  | `MM-dd HH:mm` | 3                        | 4      |
-| < 2 items (fallback) | `MM-dd HH:mm` | — (giữ từ `KChartStyle`) | —      |
+**Trục X — `lib/utils/time_ticks.dart`, gọi từ `BaseChartPainter._updateTimeTicks()` (trong `calculateValue()`, 1 lần/frame):**
 
-**Grid-time alignment:** `drawDate()` vẽ label tại đúng vị trí `columnSpace * i` (`i = 0..mGridColumns`) — trùng khớp với vị trí `drawGrid()` vẽ đường dọc. Mỗi đường grid dọc ứng đúng 1 time label bên dưới.
+1. **Tick weight** (`KLineEntity.tickWeight`, cache 1 lần lúc load/append, KHÔNG tính lại mỗi frame): mỗi nến được gán 1 trong 12 bậc `MINOR..YEAR` dựa trên việc timestamp (local time) có rơi đúng ranh giới lịch không (`alignmentWeight`), cộng thêm `crossingWeight` (bắt case nến không thẳng hàng ranh giới local — vd nến 4h ở GMT+7 rơi 03:00/07:00/11:00, không có `hour==0`).
+2. **Threshold** (`thresholdRung`): suy TRỰC TIẾP từ hình học (`barSpacing`, `interval`) — KHÔNG đếm số nến hiển thị (đếm sẽ dao động ±1 khi pan, gây nhấp nháy).
+3. **Kế hoạch** (`buildTimeTickPlan`, cache qua `TimeTickPlanner` — instance sở hữu bởi `_KChartWidgetState`, key `(identityHashCode(candles), count, barSpacing.round(), interval, format)`): lọc ứng viên qua threshold, đóng gói theo `MIN_GAP_X=64px` trên **absolute space** (`absX(i) = i*barSpacing + barSpacing/2`, KHÔNG trừ `scrollOffset`) — pan không đổi tick nào được chọn (invariant I4). Ưu tiên weight cao trước (đảm bảo ranh giới ngày thắng nến intraday), tie-break theo index. Key có `identityHashCode` để đổi symbol/timeframe (data khác) không tái dùng nhầm plan cũ; `barSpacing` làm tròn px CHỈ trong key (giá trị build thật vẫn chính xác) để pinch-zoom không rebuild toàn dataset gần như mỗi frame.
+4. **Chiếu mỗi frame** (`_updateTimeTicks`): lọc lại theo pixel `x = translateXtoX(getX(index)) ∈ [0, mPlotWidth]` — KHÔNG theo margin index, xem fix "label dính cứng ở mép" trong Unreleased.
+5. **Label text** — theo `tickWeight` của TỪNG tick: `YEAR→"2026"`, `MONTH→"Aug"`, `DAY→"10"`, còn lại→`"09:05"`. Ép cố định qua `KChartWidget.timeFormat`/`KChartStyle.dateTimeFormat` — xem [6.7](#67-timeformat-constants--ép-format-nhãn-trục-thời-gian).
 
-> `mGridColumns` được `initFormats()` override, thắng giá trị `gridColumns = 6` mặc định trong `KChartStyle`. `KChartStyle.gridColumns` chỉ có tác dụng khi `datas < 2` hoặc khi truyền `dateTimeFormat` custom (không qua auto-detect).
+Kết quả cache vào `BaseChartPainter.mTimeTicks` (`List<({int index, double x, String label})>`) — `drawGrid()` (đường dọc, dùng chung cho main/vol/secondary) VÀ `drawDate()` (label) đều đọc TỪ ĐÂY, không renderer nào tự chọn tick riêng (invariant I3/I6).
+
+**Trục Y — `lib/utils/price_ticks.dart`, gọi từ `MainRenderer` constructor (mỗi frame, renderer bị dựng lại mỗi lần `initChartRenderer()`):**
+
+```dart
+niceStep(range, targetTicks)   // ladder 1·2·2.5·5·10 × 10^n
+decimalsFor(step)              // KHÔNG suy từ magnitude — sai với họ step 2.5
+priceTicks(minPrice: ..., maxPrice: ..., height: ..., targetTicks: 6)
+```
+
+Range đưa vào `priceTicks()` là range giá **THỰC SỰ đang hiển thị** (`MainRenderer._priceAtScreenY(chartRect.top/bottom)` — nghịch đảo transform canvas `scaleY`/`offsetY` thật, không phải `minValue`/`maxValue` auto-scale gốc) — nếu dùng range gốc, zoom Y (gesture kéo dọc) sẽ khiến hầu hết tick dạt ra ngoài view (xem fix trong Unreleased). Grid ngang + độ rộng strip giá (`priceAxisWidth`, [12](#12-renderer-internals) "Price axis strip") đều ăn theo cùng `_priceTicks` này.
+
+**Test:** `test/time_ticks_test.dart` (T1-T5: never-blank, min-gap, no-dup-label, pan-stability, append-stability), `test/price_ticks_test.dart` (T6-T7: price ticks trong range, decimals đúng cho họ 2.5) — chạy `flutter test` ở root repo.
 
 ---
 
@@ -1187,23 +1232,32 @@ DepthChart(
 
 ## 12. Renderer internals
 
-### Layout dọc
+### Layout dọc + ngang (price axis strip, CHART_AXES.md §7)
+
+Layout giờ 2 chiều — dọc như trước (main/vol/secondary/date), NHƯNG mỗi rect chỉ rộng `mPlotWidth`, phần còn lại bên phải (`mPlotWidth..mWidth`) là 1 cột riêng dùng chung cho label giá của MỌI panel:
 
 ```
-┌───────────────────────────────────────────┐
-│  mTopPadding (chartStyle.topPadding + N×12) │ ← N main indicators
-├───────────────────────────────────────────┤
-│              mMainRect                    │ candles + main indicators
-├───────────────────────────────────────────┤
-│  mVolRect   (mVolumeHeight)               │ vol panel (null nếu volHidden)
-├───────────────────────────────────────────┤
-│  mSecondaryRectList[0]                    │ MACD
-├───────────────────────────────────────────┤
-│  mSecondaryRectList[1]                    │ RSI
-├───────────────────────────────────────────┤
-│  mDateRect  (chartStyle.bottomPadding)    │ trục thời gian (đáy cùng)
-└───────────────────────────────────────────┘
+        0                                          mPlotWidth      mWidth
+        ┌──────────────────────────────────────────────┬──────────────┐
+        │  mTopPadding                                  │              │
+        ├────────────────────────────────────────────── │              │
+        │              mMainRect                        │              │
+        ├────────────────────────────────────────────── │              │
+        │  mVolRect   (null nếu volHidden)              │  mPriceAxisRect
+        ├────────────────────────────────────────────── │  (label giá của
+        │  mSecondaryRectList[0]                        │   main/vol/     │
+        ├────────────────────────────────────────────── │   secondary,    │
+        │  mSecondaryRectList[1]                        │   cùng 1 cột)   │
+        ├──────────────────────────────────────────────┼──────────────┤
+        │  mDateRect  (rộng = mPlotWidth, KHÔNG mWidth)  │  mCornerRect │
+        └──────────────────────────────────────────────┴──────────────┘
 ```
+
+- `mPlotWidth = max(1, mWidth - priceAxisWidth)`. `priceAxisWidth` đọc từ `priceAxisWidthCache.value` (instance `PriceAxisWidthCache`, sở hữu bởi `_KChartWidgetState`, truyền vào painter qua constructor — **không phải `static`**; đổi lại sau code review vì `static` khiến nhiều `KChartWidget` đồng thời rò rỉ layout vào nhau, xem Unreleased) — tự đo theo label rộng nhất của `MainRenderer` — clamp `[48,96]`, làm tròn bội 8, hysteresis (chỉ thu khi thấp hơn hẳn 1 bậc, chống vòng lặp phản hồi width→layout→label→width). Đo/cập nhật ở CUỐI `initChartRenderer()` (gọi `updatePriceAxisWidth()`, giờ là instance method), áp dụng cho FRAME SAU (trễ đúng 1 frame — phá vòng lặp tự tham chiếu mà không cần biết trước độ rộng label).
+- `mCornerRect` (góc dưới-phải, giao strip giá × trục thời gian) — không thuộc trục nào, chỉ tô nền (`drawBg`) để 2 đường phân cách kết thúc gọn.
+- 2 đường phân cách khung (`ChartPainter._drawAxisSeparators`, vẽ trong `drawGrid()`): dọc tại `x=mPlotWidth` (cao hết plot+strip giá+trục thời gian), ngang tại đỉnh `mDateRect` (rộng hết `mWidth`).
+- `VolRenderer`/`SecondaryRenderer`/`MainRenderer` đều nhận thêm `priceAxisRect` (constructor) — vẽ label giá vào ĐÓ thay vì đè lên nội dung panel như trước. 13 file indicator (MACD/KDJ/RSI/...) không sửa gì — `SecondaryRenderer.drawVerticalText` dùng `canvas.translate(priceAxisRect.left, 0)` để công thức `chartRect.width - x` sẵn có của chúng (giả định local x=0) vẫn đúng dù `priceAxisRect.left != 0`.
+- Crosshair (`drawCrossLineText`) là layer DUY NHẤT không bị giới hạn `mPlotWidth` — vẫn dùng `mWidth`, vì readout label của nó CỐ Ý tràn vào cả strip giá lẫn trục thời gian (CHART_AXES.md §7.5).
 
 ### Tọa độ X
 
@@ -1213,6 +1267,10 @@ xToTranslateX(x)    = -mTranslateX + x / scaleX
 indexOfTranslateX() = binary search trên getX(i)
 translateXtoX(tx)   = (tx + mTranslateX) * scaleX
 ```
+
+`mStartIndex`/`mStopIndex` (viewport thô, xem bảng 3-phạm-vi bên dưới) tính qua `xToTranslateX(0)`/`xToTranslateX(mPlotWidth)` — **`mPlotWidth`, không phải `mWidth`** (dùng `mWidth` sẽ tính dư index vào phần bị strip giá che khuất, làm lệch auto-scale giá).
+
+**Tick trục X thật sự hiển thị** (`mTimeTicks`, `List<({int index, double x, String label})>`) tính trong `calculateValue()` qua `BaseChartPainter._updateTimeTicks()` — thuật toán weight-ladder đầy đủ ở [10.4](#104-time-tick-planner--price-ticks-trục-xy) + `CHART_AXES.md` §5. `drawGrid()`/`drawDate()` chỉ đọc từ đây, không tự chọn tick.
 
 ### Tọa độ Y
 
@@ -1228,6 +1286,8 @@ double _applyScaleY(double rawY) {
       .clamp(mMainRect.top, mMainRect.bottom);
 }
 ```
+
+`_applyScaleY` dùng cho label vẽ ngoài canvas transform (nowPrice, maxMin, crosshair). `MainRenderer` có bản NGHỊCH ĐẢO riêng, `_priceAtScreenY(yScreen)` — suy giá TẠI 1 toạ độ Y màn hình, dùng để tính range giá đang thực sự hiển thị rồi sinh tick nice-number theo đó (xem [10.4](#104-time-tick-planner--price-ticks-trục-xy)). 2 hàm này là nghịch đảo của nhau về mặt toán học (cùng công thức `centerY + (v-centerY)*scaleY + offsetY`, chỉ khác `centerY` là `(mMainRect.top+bottom)/2` hay `scaleCenterY` truyền vào — thực chất là 1).
 
 ### Vùng tương lai (future zone) — indicator dịch trục (Ichimoku)
 
@@ -1263,17 +1323,21 @@ static double effectiveRightPaddingPx(double xFrontPadding, double chartWidth) {
 }
 
 double getMinTranslateX() {
-  final paddingData = effectiveRightPaddingPx(xFrontPadding, mWidth) / scaleX;
-  var x = -mDataLen + mWidth / scaleX - mPointWidth / 2 - paddingData;
+  // mPlotWidth, không phải mWidth — nến cuối phải cách MÉP PLOT (không phải
+  // mép strip giá) đúng khoảng padding này.
+  final paddingData = effectiveRightPaddingPx(xFrontPadding, mPlotWidth) / scaleX;
+  var x = -mDataLen + mPlotWidth / scaleX - mPointWidth / 2 - paddingData;
   return x >= 0 ? 0.0 : x;
 }
 ```
 
-| `mWidth` (xFrontPadding=100) | Padding màn hình |
-| ---------------------------- | ---------------- |
-| ≥ 375px                      | 100px            |
-| 250px                        | ~67px            |
-| 187px                        | ~50px            |
+| `mPlotWidth` (xFrontPadding=100) | Padding màn hình |
+| --------------------------------- | ---------------- |
+| ≥ 375px                           | 100px            |
+| 250px                              | ~67px            |
+| 187px                              | ~50px            |
+
+> Trước khi có strip giá, hàm này dùng thẳng `mWidth` (= `mPlotWidth` lúc đó vì chưa có strip). `effectiveRightPaddingPx` vẫn còn dùng nguyên cho mục đích này; nó KHÔNG còn quyết định bề rộng vùng gesture scaleY nữa — xem [13.3](#133-scale).
 
 ### `KChartScaleState`
 
@@ -1298,21 +1362,22 @@ class KChartScaleState {
 
 ```
 paint()
-├── initRect()
-├── calculateValue()
-├── initChartRenderer()
-├── drawBg()
-├── drawGrid()
+├── (§7.8) return sớm nếu size.width/height <= 0 — không vẽ garbage vào Rect âm
+├── initRect()           → mPlotWidth (theo priceAxisWidth cache TỪ FRAME TRƯỚC), mMainRect/mVolRect/mSecondaryRectList/mDateRect (rộng = mPlotWidth), mPriceAxisRect, mCornerRect
+├── calculateValue()     → mStartIndex/mStopIndex (theo mPlotWidth), max/min, mTimeTicks (weight-ladder planner)
+├── initChartRenderer()  → dựng renderer (nhận priceAxisRect) rồi ĐO LẠI label rộng nhất → BaseChartPainter.updatePriceAxisWidth() cho FRAME SAU
+├── drawBg()              (phủ cả strip giá + ô góc chết, không riêng mPlotWidth)
+├── drawGrid()             (theo mTimeTicks + _priceTicks mỗi panel) + 2 đường phân cách khung
 ├── drawChart()
 │   ├── canvas transform (scaleX, translateX)
 │   ├── canvas transform (scaleY, offsetY) → clip mMainRect
 │   │   ├── MainRenderer.drawChart()
 │   │   └── VolRenderer.drawChart()    ← ngoài scaleY scope
 │   └── SecondaryRenderer.drawChart()  ← ngoài scaleY scope
-├── drawVerticalText()
-├── drawDate()
+├── drawVerticalText()    (vẽ vào mPriceAxisRect, không đè lên nội dung panel)
+├── drawDate()             (kẹp text theo mPlotWidth)
 ├── drawText()          ← dùng getItem(mStopIndex) không phải datas!.last
-├── drawMaxAndMin()
+├── drawMaxAndMin()        (flip trái/phải theo mPlotWidth/2, không phải mWidth/2)
 └── drawNowPrice()      ← dùng livePrice nếu có, fallback datas!.last.close
 ```
 
@@ -1403,10 +1468,12 @@ if (_lastRender == null || now - _lastRender! > 16) {
 
 `onScaleStart` chốt 2 cờ:
 
-- `_isScaleYGesture`: 1 ngón + drag dọc trong vùng phải (`effectiveRightPaddingPx`) → scaleY.
+- `_isScaleYGesture`: 1 ngón + chạm trong vùng phải rộng `BaseChartPainter.priceAxisWidth` (**không còn** `effectiveRightPaddingPx`/`xFrontPadding` — đó là padding sau nến cuối, không liên quan tới strip giá; đổi khi thêm price axis strip, xem Unreleased) → scaleY.
 - `_gestureInMain`: `painter.isInMainRect(localFocalPoint)`. Nếu **false** (vol/secondary/date), chỉ scroll X, forward dy cho outer scroll.
 
-`onScaleUpdate` — 4 nhánh khi `_gestureInMain == true`:
+> **Bẫy:** từ khi có strip giá riêng, `mMainRect` không còn phủ hết chiều rộng — chạm strip giá TRONG hàng main cũng khiến `isInMainRect` trả `false`. `onScaleUpdate` phải loại trừ rõ `_isScaleYGesture` khỏi điều kiện `!_gestureInMain` (đã fix), nếu không gesture scaleY hợp lệ trên strip bị nhánh "outside main" nuốt mất, biến thành forward-outer-scroll sai.
+
+`onScaleUpdate` — 4 nhánh khi `_gestureInMain == true` **hoặc** `_isScaleYGesture == true`:
 
 | Điều kiện                         | Hành vi                                                            |
 | --------------------------------- | ------------------------------------------------------------------ |
@@ -1450,7 +1517,7 @@ if (mScaleY != 1.0) {
 
 ### 13.6 Double-tap (vùng phải scaleY)
 
-Double-tap → reset `mScaleY = 1.0`, `mOffsetY = 0.0`.
+Double-tap trong cùng vùng `priceAxisWidth` ở trên → reset `mScaleY = 1.0`, `mOffsetY = 0.0`.
 
 ### 13.7 Fling
 
@@ -1764,7 +1831,9 @@ SingleChildScrollView(
 
 ## 16. Phân tích cơ chế Y Grid & Anchor Zoom (MEXC / TradingView)
 
-> Tổng hợp từ phân tích kỹ thuật `anchor_zoom.md` và `scroll_vertical_y.md`. Đây là tham khảo thiết kế — k_chart_jk hiện dùng mô hình `mScaleY + mOffsetY` (canvas transform), không phải `visibleMinPrice / visibleMaxPrice`.
+> Tổng hợp từ phân tích kỹ thuật `anchor_zoom.md` và `scroll_vertical_y.md`. Đây là tham khảo thiết kế — k_chart_jk hiện dùng mô hình `mScaleY + mOffsetY` (canvas transform), không phải `visibleMinPrice / visibleMaxPrice` làm state chính.
+>
+> **Cập nhật:** phần **16.2 Dynamic Y Grid** bên dưới giờ **đã implement**, chỉ khác cách tiếp cận — không lưu `visibleMinPrice`/`visibleMaxPrice` làm state, mà mỗi frame `MainRenderer` NGHỊCH ĐẢO transform `mScaleY`/`offsetY` hiện có để suy ra range đang hiển thị (`_priceAtScreenY`), rồi sinh nice-number step từ range đó (`lib/utils/price_ticks.dart`, xem [10.4](#104-time-tick-planner--price-ticks-trục-xy)) — cùng kết quả cuối (grid tự thích ứng, không nhảy), khác cơ chế lưu trữ. 16.1 (Vertical Scroll bằng `visibleMinPrice`/`visibleMaxPrice`) và 16.3 (Anchor Zoom tường minh) vẫn CHỈ là tham khảo, chưa áp dụng — `mScaleY`/`offsetY` hiện tại không anchor chính xác tại điểm chạm khi zoom Y (chỉ có `zoomAt` cho trục X làm việc này — xem `CHART_AXES.md` §4).
 
 ### 16.1 Vertical Scroll — di chuyển khoảng giá
 
@@ -1891,5 +1960,6 @@ zoomAtPoint(anchorY, newScale / oldScale);
 
 ---
 
+_Cập nhật: 2026-08-10 — viết lại toàn bộ trục X/Y theo `CHART_AXES.md` (weight-ladder time-tick planner, nice-number price ticks, price axis strip riêng §7), fix label trục thời gian dính mép, fix tick giá không thích ứng gesture zoom Y, fix retry-widen data gap ở example app. Cập nhật section 1 (Unreleased), 2, 6.7, 10.4 (viết lại hoàn toàn), 12, 13.3/13.6, 16._
 _Cập nhật: 2026-07-02 — fix 3 bug shouldRepaint/getDate-cache phát hiện qua code review (isLine, isTrendLine/selectY/lines, date-string cache identity), cập nhật section 12 & 10.3._
 _Cập nhật: 2026-06-30 — thêm shouldRepaint logic, livePrice real-time pattern, recipe 14.10, pitfalls, section 16 (Y Grid & Anchor Zoom)_
