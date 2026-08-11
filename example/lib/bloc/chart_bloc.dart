@@ -13,6 +13,7 @@ import '../market/order_book.dart';
 import '../market/realtime_frame.dart';
 import 'chart_event.dart';
 import 'chart_state.dart';
+import 'kline_merge.dart';
 
 // ── Event nội bộ — chỉ ChartBloc tự dispatch từ listener WS/timer bên trong.
 // Private theo file (Dart library-level) nên View không thấy và không gọi được.
@@ -500,10 +501,11 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
       // state.data đọc BÊN TRONG khoá — mới nhất tính đến lúc này, không bị
       // handler khác (toggle indicator, load more...) chen ngang đè mất.
       var data = state.data;
+      final intervalMs = state.timeframe.interval.inMilliseconds;
       for (final k in bars) {
         // Re-check period: timeframe có thể đã đổi khi bar còn nằm buffer.
         if (k.period != state.timeframe.wsPeriod) continue;
-        data = _mergeBar(data, k);
+        data = mergeKlineBar(data, k, intervalMs: intervalMs);
       }
       if (identical(data, state.data)) return;
       var next = state.copyWith(data: data);
@@ -512,26 +514,6 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
       next = next.copyWith(data: computed);
       emit(next);
     });
-  }
-
-  /// Merge 1 bar WS vào series theo barCloseTime tăng dần: trùng time →
-  /// replace (update nến đang chạy), mới hơn → append, còn lại → insert
-  /// đúng vị trí. Luôn trả list MỚI — không sửa in-place để KChartWidget
-  /// thấy reference đổi mà repaint.
-  static List<KLineEntity> _mergeBar(
-    List<KLineEntity> series,
-    MarketKline bar,
-  ) {
-    final entity = bar.toEntity();
-    final t = entity.time!;
-    if (series.isEmpty) return [entity];
-    if (t > series.last.time!) return [...series, entity];
-    for (var i = series.length - 1; i >= 0; i--) {
-      final ti = series[i].time!;
-      if (ti == t) return [...series]..[i] = entity;
-      if (ti < t) return [...series]..insert(i + 1, entity);
-    }
-    return [entity, ...series];
   }
 
   void _onLivePriceChanged(

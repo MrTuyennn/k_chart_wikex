@@ -608,22 +608,28 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
             ],
           ),
         ),
-        // Timeframe + scale đã lưu
+        // Timeframe + scale đã lưu — cuộn ngang: 7 khung (1m..1D) không đủ
+        // chỗ trong 1 Row cố định trên màn hình hẹp (RenderFlex overflow).
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-          child: Row(
-            children: [
-              for (final tf in ChartTimeframe.values) ...[
-                _chip(
-                  tf.label,
-                  state.timeframe == tf,
-                  state.isDark,
-                  () =>
-                      context.read<ChartBloc>().add(ChartTimeframeChanged(tf)),
-                ),
-                const SizedBox(width: 6),
+          padding: const EdgeInsets.fromLTRB(12, 4, 0, 0),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.only(right: 12),
+            child: Row(
+              children: [
+                for (final tf in ChartTimeframe.values) ...[
+                  _chip(
+                    tf.label,
+                    state.timeframe == tf,
+                    state.isDark,
+                    () => context.read<ChartBloc>().add(
+                      ChartTimeframeChanged(tf),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
               ],
-            ],
+            ),
           ),
         ),
         Padding(
@@ -837,12 +843,11 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
       showNowPrice: true,
       showInfoDialog: true,
       mBaseHeight: 280,
-      // Chọn phút/giờ (15m, 1H, 4H) → luôn hiện ngày-tháng giờ:phút; chọn
-      // ngày (1D) → luôn hiện ngày-tháng-năm. Ép cố định theo khung đang
-      // chọn, không dùng thuật toán thích ứng theo zoom của CHART_AXES.md.
-      timeFormat: state.timeframe == ChartTimeframe.d1
-          ? const [dd, '-', mm, '-', yyyy]
-          : const [dd, '-', mm, ' ', hour24Padded, ':', nn],
+      // Ép format nhãn trục theo ĐÚNG khung thời gian đang chọn (yêu cầu
+      // riêng, khác thuật toán thích ứng theo weight của CHART_AXES.md
+      // §5.3) — xem `ChartTimeframe.axisTimeFormat`. Thuật toán CHỌN
+      // TICK/vị trí (weight-ladder) không đổi, chỉ đổi CHỮ hiển thị.
+      timeFormat: state.timeframe.axisTimeFormat,
       onLoadMore: (isLeft) =>
           context.read<ChartBloc>().add(ChartMoreDataRequested(isLeft)),
       isLoadingMore: state.isFetching,

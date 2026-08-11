@@ -448,11 +448,18 @@ abstract class BaseChartPainter extends CustomPainter {
 
     final double barSpacing = mPointWidth * scaleX;
     final int intervalMs = detectIntervalMs(datas!);
+    // Format label: ưu tiên `chartStyle.dateTimeFormat` (consumer tự set),
+    // nếu không thì dùng `mFormats` — format CỐ ĐỊNH suy từ khoảng cách 2
+    // nến đầu (`initFormats()`, cơ chế trước khi có CHART_AXES.md §5.3),
+    // KHÔNG phải format đổi theo tickWeight từng tick. Vẫn giữ nguyên thuật
+    // toán CHỌN TICK (weight-ladder/TimeTickPlanner) — chỉ đổi phần CHỮ hiển
+    // thị, không quay lại cơ chế mGridColumns chia đều cột cũ.
+    final List<String> effectiveFormat = chartStyle.dateTimeFormat ?? mFormats;
     final List<TimeTick> plan = timeTickPlanner.getOrBuild(
       candles: datas!,
       barSpacing: barSpacing,
       intervalMs: intervalMs,
-      forcedFormat: chartStyle.dateTimeFormat,
+      forcedFormat: effectiveFormat,
     );
 
     final ticks = <({int index, double x, String label})>[];
@@ -473,10 +480,7 @@ abstract class BaseChartPainter extends CustomPainter {
       ticks.add((
         index: mid,
         x: translateXtoX(getX(mid)),
-        label: labelForCandle(
-          datas![mid],
-          forcedFormat: chartStyle.dateTimeFormat,
-        ),
+        label: labelForCandle(datas![mid], forcedFormat: effectiveFormat),
       ));
     }
 

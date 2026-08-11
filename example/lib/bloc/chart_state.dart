@@ -53,7 +53,10 @@ SecondaryIndicator buildSecondaryIndicator(SecondaryIndicatorType type) =>
     };
 
 enum ChartTimeframe {
+  m1('1m', Duration(minutes: 1), '1', '1min'),
+  m5('5m', Duration(minutes: 5), '5', '5min'),
   m15('15m', Duration(minutes: 15), '15', '15min'),
+  m30('30m', Duration(minutes: 30), '30', '30min'),
   h1('1H', Duration(hours: 1), '60', '1hour'),
   h4('4H', Duration(hours: 4), '240', '4hour'),
   d1('1D', Duration(days: 1), '1D', '1day');
@@ -73,6 +76,22 @@ enum ChartTimeframe {
 
   /// Field `period` trong payload WS kline — dùng lọc frame theo khung.
   final String wsPeriod;
+
+  /// Format nhãn trục thời gian theo ĐÚNG khung đang chọn (không suy từ
+  /// khoảng cách data như `mFormats`/`initFormats()` cũ) — truyền thẳng vào
+  /// `KChartWidget.timeFormat`:
+  ///  - khung phút (1m/5m/15m/30m) → `HH:mm`
+  ///  - khung giờ (1H/4H)          → `MM-dd HH:mm`
+  ///  - khung ngày (1D)            → `yy-MM-dd`
+  List<String> get axisTimeFormat {
+    if (interval < const Duration(hours: 1)) {
+      return const [hour24Padded, ':', nn];
+    }
+    if (interval < const Duration(days: 1)) {
+      return const [mm, '-', dd, ' ', hour24Padded, ':', nn];
+    }
+    return const [yy, '-', mm, '-', dd];
+  }
 }
 
 /// Toàn bộ data/business state của demo chart. View chỉ đọc field/getter ở
