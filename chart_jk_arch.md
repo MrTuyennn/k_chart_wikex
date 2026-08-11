@@ -30,6 +30,10 @@
 
 ### Unreleased
 
+- **fix:** `drawDate()` đổi sang **clip canvas** thay vì kẹp text vào trong màn hình (cách cũ, xem bullet '"dính cứng" ở 2 đầu mép' bên dưới — vẫn đúng lý do gốc, nhưng cách khắc phục giờ khác). Giờ `canvas.clipRect(0, mDateRect.top, mPlotWidth, mDateRect.bottom)` rồi vẽ label ở ĐÚNG `tick.x` thật, không dịch, không điều kiện fit — canvas tự cắt phần thừa khi label trượt qua mép, **y hệt cách nến/cột volume đã luôn được clip khi ra khỏi viewport** — không còn khái niệm ẩn/hiện, chỉ có trượt vào/ra liên tục.
+  - File: `lib/renderer/chart_painter.dart`
+- **fix (test, đi kèm entry "tắt hết indicator mặc định"):** `example/test/persistent_isolate_test.dart` assertion khớp lại đúng `_kIndicatorsEnabledByDefault = false` hiện tại của `ChartBloc` — toggle nghĩa là BẬT (`contains`), không phải TẮT (`isNot(contains)`).
+  - File: `example/test/persistent_isolate_test.dart`
 - **perf/fix (từ `/code-review` trên diff trục X/Y):** 4 vấn đề phát hiện qua code review — 2 performance, 2 correctness — đều đã sửa, KHÔNG đổi thuật toán/output hiển thị đã chốt ở bullet bên dưới, không đụng indicator nào.
   - **perf — cache tick thời gian rescan toàn dataset gần như mỗi frame lúc pinch-zoom:** `TimeTickPlanner`'s cache key có `barSpacing` dạng số thực, đổi liên tục theo `scaleX` trong lúc zoom → cache-miss gần như mỗi frame → rebuild lại `buildTimeTickPlan` trên TOÀN BỘ dataset (alloc `DateTime`/nến trong `_assignTickWeights`), đúng lúc cần mượt nhất. Sửa: làm tròn `barSpacing` về px nguyên CHỈ trong cache key (giá trị chính xác vẫn dùng để build khi thật sự rebuild) — sai lệch dưới 1px không đổi tick nào được chọn trong thực tế (`SURPLUS=4` ở threshold đã chừa biên an toàn).
   - **perf — `MainRenderer.measureMaxLabelWidth` dựng lại `TextPainter` + `layout()` mỗi frame** dù range giá/style không đổi. Sửa: thêm `_priceLabelCache` (`static final Map<(String, TextStyle), TextPainter>`, an toàn dùng chung process vì là hàm THUẦN của input) — dùng lại cho cả `measureMaxLabelWidth` lẫn `drawVerticalText`. Đúng khuyến nghị "Cache laid-out text by (string, colour, size, weight)" ở CHART_AXES.md §8.
@@ -217,7 +221,7 @@ KChartWidget  (state + gesture)
    │       │   │   └─ for each SecondaryRenderer.drawChart()
    │       │   └─ drawCrossLine / drawTrendLines
    │       ├─ drawVerticalText()       (main + vol + secondaries — vẽ vào mPriceAxisRect, không đè lên nội dung panel nữa)
-   │       ├─ drawDate()               (kẹp text theo mPlotWidth, không phải full mWidth)
+   │       ├─ drawDate()               (clip canvas theo mPlotWidth, vẽ label ở đúng vị trí thật — không phải full mWidth)
    │       ├─ drawText(getItem(mStopIndex))    (main + vol + secondaries)
    │       ├─ drawMaxAndMin() / drawNowPrice()     (qua _applyScaleY)
    │       └─ drawCrossLineText() (nếu long-press/tap — span cả mWidth, KHÔNG bị giới hạn mPlotWidth, xem CHART_AXES.md §7.5)
@@ -1375,7 +1379,7 @@ paint()
 │   │   └── VolRenderer.drawChart()    ← ngoài scaleY scope
 │   └── SecondaryRenderer.drawChart()  ← ngoài scaleY scope
 ├── drawVerticalText()    (vẽ vào mPriceAxisRect, không đè lên nội dung panel)
-├── drawDate()             (kẹp text theo mPlotWidth)
+├── drawDate()             (clip canvas theo mPlotWidth — label trượt/cắt tự nhiên như nến, không kẹp)
 ├── drawText()          ← dùng getItem(mStopIndex) không phải datas!.last
 ├── drawMaxAndMin()        (flip trái/phải theo mPlotWidth/2, không phải mWidth/2)
 └── drawNowPrice()      ← dùng livePrice nếu có, fallback datas!.last.close

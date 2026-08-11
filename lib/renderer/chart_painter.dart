@@ -367,18 +367,22 @@ class ChartPainter extends BaseChartPainter {
 
     // Tick đã được BaseChartPainter chọn 1 lần/frame (weight ladder,
     // CHART_AXES.md §5) — ở đây chỉ vẽ, không tự chọn tick (I3).
+    //
+    // KHÔNG kẹp/ẩn label theo có "fit" hay không — 2 cách đó đều gây cảm giác
+    // ẩn/hiện đột ngột ở 2 mép (kẹp thì label dính cứng 1 chỗ; ẩn khi không
+    // fit thì label biến mất/xuất hiện đột ngột dù gridline vẫn còn). Thay
+    // vào đó CLIP canvas theo đúng mPlotWidth rồi vẽ label ở ĐÚNG vị trí thật
+    // (tick.x, không dịch) — y hệt cách nến/volume bị canvas cắt tự nhiên khi
+    // trượt ra khỏi viewport, cho cảm giác trượt liên tục thay vì bật/tắt.
+    canvas.save();
+    canvas.clipRect(Rect.fromLTRB(0, mDateRect.top, mPlotWidth, mDateRect.bottom));
     for (final tick in mTimeTicks) {
       TextPainter tp = getTextPainter(tick.label, null);
       double y = mDateRect.top + (mBottomPadding - tp.height) / 2;
-      // Kẹp phần TEXT vào trong màn hình, KHÔNG kẹp đường lưới — giữ đúng I6
-      // (line và label vẫn cùng 1 toạ độ gốc, chỉ text được dịch để không tràn mép).
-      // mPlotWidth, không phải size.width — trục thời gian rộng bằng plot,
-      // không lấn sang strip giá (R1, §7).
       double x = tick.x - tp.width / 2;
-      if (x < 0) x = 0;
-      if (x > mPlotWidth - tp.width) x = mPlotWidth - tp.width;
       tp.paint(canvas, Offset(x, y));
     }
+    canvas.restore();
   }
 
   /// draw the cross line. when user focus

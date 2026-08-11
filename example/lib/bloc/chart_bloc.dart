@@ -151,36 +151,44 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
 
   static String get _topicPath => MarketEnv.symbol; // đã đúng dạng BASE/QUOTE
 
+  /// true = bật sẵn TOÀN BỘ indicator lúc mở app (demo xem hết cùng lúc);
+  /// false = tắt hết, user tự bật qua chip. Đổi 1 chỗ duy nhất ở đây, không
+  /// cần sửa lại 2 `Set` bên dưới.
+  static const bool _kIndicatorsEnabledByDefault = false;
+
   static ChartState _initialState() {
     return const ChartState(
       data: [],
       timeframe: ChartTimeframe.h1,
-      // Bật hết toàn bộ indicator đã implement — demo xem tất cả cùng lúc.
-      mainTypes: {
-        MainIndicatorType.ma,
-        MainIndicatorType.boll,
-        MainIndicatorType.ema,
-        MainIndicatorType.sar,
-        MainIndicatorType.superTrend,
-        MainIndicatorType.zigzag,
-        MainIndicatorType.avl,
-        MainIndicatorType.ichimoku,
-      },
-      secondaryTypes: {
-        SecondaryIndicatorType.macd,
-        SecondaryIndicatorType.kdj,
-        SecondaryIndicatorType.rsi,
-        SecondaryIndicatorType.wr,
-        SecondaryIndicatorType.cci,
-        SecondaryIndicatorType.obv,
-        SecondaryIndicatorType.trix,
-        SecondaryIndicatorType.mtm,
-        SecondaryIndicatorType.stochRsi,
-        SecondaryIndicatorType.brar,
-        SecondaryIndicatorType.bias,
-        SecondaryIndicatorType.psy,
-        SecondaryIndicatorType.atr,
-      },
+      mainTypes: _kIndicatorsEnabledByDefault
+          ? {
+              MainIndicatorType.ma,
+              MainIndicatorType.boll,
+              MainIndicatorType.ema,
+              MainIndicatorType.sar,
+              MainIndicatorType.superTrend,
+              MainIndicatorType.zigzag,
+              MainIndicatorType.avl,
+              MainIndicatorType.ichimoku,
+            }
+          : {},
+      secondaryTypes: _kIndicatorsEnabledByDefault
+          ? {
+              SecondaryIndicatorType.macd,
+              SecondaryIndicatorType.kdj,
+              SecondaryIndicatorType.rsi,
+              SecondaryIndicatorType.wr,
+              SecondaryIndicatorType.cci,
+              SecondaryIndicatorType.obv,
+              SecondaryIndicatorType.trix,
+              SecondaryIndicatorType.mtm,
+              SecondaryIndicatorType.stochRsi,
+              SecondaryIndicatorType.brar,
+              SecondaryIndicatorType.bias,
+              SecondaryIndicatorType.psy,
+              SecondaryIndicatorType.atr,
+            }
+          : {},
       savedChartScale: KChartScaleState(),
       isLine: false,
       volHidden: false,
