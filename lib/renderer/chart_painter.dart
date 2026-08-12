@@ -276,6 +276,16 @@ class ChartPainter extends BaseChartPainter {
     }
 
     canvas.save();
+    // Clip theo chiều NGANG vào đúng mPlotWidth, ÁP TRƯỚC translate/scale
+    // theo X bên dưới nên nằm ở screen space (không co giãn theo scaleX) —
+    // nếu không, nến/volume/secondary ở gần mép phải sẽ vẽ TRÀN vào price-
+    // axis strip (đè lên label giá) trước khi index của chúng bị index-loop
+    // (mRealStopIndex/mVisibleStopIndex) loại hẳn khỏi vòng vẽ — thấy rõ nhất
+    // khi zoom vào (candleWidth lớn, thân nến cuối cùng thừa hẳn ra ngoài dù
+    // tâm nến vẫn còn nằm trong mPlotWidth). Nến/volume/secondary vốn không
+    // hề bị clip ngang ở đâu khác — clip duy nhất trước đây (`BaseChartPainter.
+    // paint`) phủ TOÀN canvas, gồm cả strip giá, nên không chặn được.
+    canvas.clipRect(Rect.fromLTRB(0, 0, mPlotWidth, mDateRect.top));
     canvas.translate(mTranslateX * scaleX, 0.0);
     canvas.scale(scaleX, 1.0);
 
