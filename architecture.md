@@ -42,7 +42,7 @@ Kiến trúc gốc (Flutter) tách làm 3 lớp: **Container** (state + gesture)
 **Nguyên tắc quan trọng nhất khi port** (trích từ codebase, áp dụng nguyên văn):
 
 - Toàn bộ main chart được vẽ trong **một bề mặt canvas duy nhất** theo thứ tự lớp cố định (xem §5) — các indicator phụ (secondary) không phải là "widget riêng" chồng lên nhau, mà là các đoạn vẽ tuần tự trong cùng 1 lần `paint()`.
-- **Chỉ tính min/max trên vùng dữ liệu đang hiển thị** (`startIndex..stopIndex`), không phải toàn bộ dataset — nếu không, auto-scale trục Y sẽ sai mỗi lần scroll.
+- **Chỉ tính min/max trên vùng dữ liệu ĐANG THỰC SỰ HIỂN THỊ** (`visibleStartIndex..visibleStopIndex` — hẹp, đã clamp về nến thật VÀ trong viewport; xem §3.5 nếu có indicator dùng vùng tương lai), KHÔNG PHẢI dải thô `startIndex..stopIndex` (có thể trỏ ra ngoài mảng data) và càng không phải toàn bộ dataset — nếu không, auto-scale trục Y sẽ sai mỗi lần scroll.
 - **`scrollX`/`scaleX` phải là phép biến đổi hệ toạ độ (translate + scale) áp cho toàn bộ canvas vẽ nến**, không phải tính tay từng toạ độ x nhân với scale riêng lẻ — nếu nền tảng đích không có ma trận transform, phải tự áp dụng công thức tương đương `screenX = (dataX + translateX) * scaleX` cho MỌI điểm vẽ trong vùng đó (kể cả bề rộng nét vẽ cần "counter-scale" ngược lại, xem §3.1).
 - **`scaleY` chỉ áp cho vùng main chart** (nến + main indicator); panel volume và secondary KHÔNG bao giờ bị scaleY/offsetY — đây là điểm dễ port sai nhất.
 - Mọi label/text/line vẽ **ngoài** vùng đã transform (now-price, max/min label, crosshair price label) phải tự áp lại công thức transform tương đương bằng tay (`applyScaleY`, xem §3.2).
@@ -136,18 +136,20 @@ indexOfTranslateX(tx)   = binary search trên getX(i) tìm i gần nhất
 translateXtoX(tx)       = (tx + translateX) * scaleX           // nghịch đảo — data space → screen space
 ```
 
+> **⚠️ `chartWidth` trong toàn bộ mục này (và §6.5/§12) nghĩa là `mPlotWidth`, KHÔNG PHẢI bề rộng canvas đầy đủ.** Từ khi có strip trục giá riêng bên phải (§4, §7 CHART_AXES.md), canvas thật rộng `mWidth = mPlotWidth + priceAxisWidth` — nhưng mọi công thức scroll/index/padding dưới đây (và cả điểm neo pinch ở §6.5) vẫn tính theo `mPlotWidth` (phần plot thật sự chứa nến), không tính cả strip giá. Dùng nhầm `mWidth` đầy đủ ở bất kỳ công thức nào bên dưới sẽ làm dải index hiển thị tính lố vào phần bị strip giá che khuất — đúng lớp lỗi đã gặp thực tế (nến/volume/secondary đè lên strip giá trước khi biến mất khi scroll, xem cảnh báo MUST MATCH cuối mục này).
+
 **Padding phải co giãn theo bề rộng màn hình** (để tránh khoảng trống cố định quá lớn trên màn hình hẹp):
 
 ```
 referenceChartWidth = 375.0   // px tham chiếu
 
-effectiveRightPaddingPx(xFrontPadding, chartWidth):
+effectiveRightPaddingPx(xFrontPadding, chartWidth):    // chartWidth = mPlotWidth, xem cảnh báo trên
     if chartWidth <= 0: return xFrontPadding
     ratio = chartWidth / referenceChartWidth
     return xFrontPadding * min(ratio, 1.0)
 ```
 
-Ví dụ với `xFrontPadding = 100`: chartWidth ≥ 375px → giữ nguyên 100px; 250px → ~67px; 187px → ~50px.
+Ví dụ với `xFrontPadding = 100`: chartWidth (mPlotWidth) ≥ 375px → giữ nguyên 100px; 250px → ~67px; 187px → ~50px.
 
 **Biên scroll tối đa** (bao nhiêu data-space còn lại phía trái sau khi trừ padding phải):
 
@@ -165,12 +167,22 @@ maxScrollX = abs(getMinTranslateX())   // giá trị này PHẢI lộ ra global/
 
 ```
 startIndex = indexOfTranslateX(xToTranslateX(0))
-stopIndex  = indexOfTranslateX(xToTranslateX(chartWidth))
+stopIndex  = indexOfTranslateX(xToTranslateX(chartWidth))   // chartWidth = mPlotWidth
 ```
+
+`startIndex`/`stopIndex` ở đây là dải THÔ — có thể trỏ ra ngoài `[0, itemCount-1]` khi có indicator dùng vùng tương lai (Ichimoku, xem §3.5). Renderer thật tách tiếp thành 2 dải hẹp/rộng hơn từ đây — **không dùng thẳng `startIndex`/`stopIndex` để vẽ hay tính auto-scale**, xem bảng "3 phạm vi index" ở §3.5.
 
 **MUST MATCH — cách áp transform khi vẽ nến**: toàn bộ vùng vẽ nến (main + volume + secondary, theo trục X) được áp **một phép biến đổi affine duy nhất** trước khi vẽ từng nến ở toạ độ `getX(i)` (data space):
 
 ```
+canvas.clipRect(0, 0, mPlotWidth, dateRect.top)   // BẮT BUỘC, áp TRƯỚC translate/scale bên dưới (screen space,
+                                                    // không co giãn theo scaleX) — chặn nến/volume/secondary/
+                                                    // crosshair/trend-line vẽ TRÀN vào strip trục giá. Thiếu clip
+                                                    // này: nến ở gần mép phải vẫn được vẽ đủ (vòng lặp chỉ loại
+                                                    // theo INDEX, không theo pixel) tới khi index bị loại hẳn khỏi
+                                                    // dải hiển thị — thấy rõ nhất khi zoom vào (candleWidth lớn,
+                                                    // thân nến cuối thừa hẳn ra ngoài mPlotWidth, đè lên label giá,
+                                                    // trước khi "biến mất"). Bug thật đã gặp, xem CHANGELOG 08-12.
 canvas.translate(translateX * scaleX, 0)
 canvas.scale(scaleX, 1.0)
 // sau đó vẽ nến tại (getX(i), giá) — KHÔNG tự nhân scaleX vào từng x thủ công
@@ -243,17 +255,31 @@ Lưu ý mẫu số dùng `maxValue` (không phải `maxValue - minValue` như c�
 
 **Secondary panel** — dùng đúng công thức chuẩn `(maxValue - minValue)` như §3.2 phần đầu (KDJ, RSI, MACD, v.v. đều dùng chung).
 
-### 3.3 Grid động theo dữ liệu
+### 3.3 Grid dọc/label trục X — weight-ladder, KHÔNG chia cột đều
 
-`gridColumns` (số cột lưới dọc) **không cố định** — tự tính lại mỗi khi data đổi dựa trên khoảng cách thời gian giữa 2 nến đầu tiên:
+> **Thay thế hoàn toàn cơ chế `gridColumns` cũ** (chia N cột đều theo pixel, N suy từ khoảng cách data) — đã bị bỏ hẳn (field tương ứng giờ là dead code, đã xoá). Mục này tóm tắt lại đủ để port đúng; công thức đầy đủ (pseudocode + test case + edge case) nằm ở `CHART_AXES.md` §5, đọc trực tiếp file đó nếu cần chính xác 100%.
 
-```
-timeDiffSeconds = (data[1].time - data[0].time) / 1000
-if timeDiffSeconds >= 86400:  gridColumns = 4   // khung ngày/tháng — 5 mốc trục X
-else:                          gridColumns = 3   // khung giờ/phút — 4 mốc trục X
-```
+Vị trí lưới dọc và nhãn trục X (giờ/ngày/tháng...) **không** còn suy từ số cột chia đều pixel. Thay vào đó:
 
-`gridRows` (lưới ngang) cố định `4` (không phụ thuộc data).
+1. **Mỗi nến được gán 1 `tickWeight`** (số nguyên, tính 1 LẦN lúc load, cache lại — không tính lại mỗi frame) dựa trên việc nến đó có rơi đúng ranh giới lịch (theo **local time** của thiết bị) hay không — 12 bậc, từ thấp lên cao: nến thường (`MINOR`) → đầu phút thứ N (`1/5/15/30`) → đầu giờ thứ N (`1/3/6/12`) → đầu ngày (`DAY`) → đầu tháng (`MONTH`) → đầu năm (`YEAR`). Nến càng "tròn lịch" (đầu năm > đầu tháng > đầu ngày > ...) thì `tickWeight` càng cao.
+2. **Mỗi frame, chọn 1 THRESHOLD-bậc từ hình học thuần** — dựa trên `barSpacing` (px giữa 2 tâm nến hiện tại = `pointWidth * scaleX`) và `intervalMs` (độ dài 1 nến), **KHÔNG đếm số nến đang hiển thị** (tránh nhấp nháy khi barSpacing thay đổi liên tục lúc pinch):
+   ```
+   MIN_GAP_X = 64.0        // khoảng cách tối thiểu (px) giữa 2 tick liền kề, không bao giờ chồng nhãn
+   SURPLUS   = 4.0         // biên an toàn — threshold chọn "dư" một chút để invariant I4 (xem dưới) luôn đúng
+   requiredGapMs = MIN_GAP_X * intervalMs / (barSpacing * SURPLUS)
+   threshold = bậc THẤP NHẤT trong 12 bậc mà khoảng cách lịch của nó (vd 1 tháng ≈ 30 ngày × 86400000ms) >= requiredGapMs
+   ```
+3. **Lọc + đóng gói ứng viên** (mọi nến có `tickWeight >= threshold`) theo `MIN_GAP_X` trên **absolute space** (toạ độ `getX(i)` trong data space, KHÔNG trừ `scrollOffset`) — đây là invariant **I4: pan (thay `scrollX`, giữ nguyên `scaleX`) KHÔNG được đổi tick nào được chọn**, chỉ đổi tick nào đang lọt vào viewport. Nếu tính theo screen-space (đã trừ scroll) thì tick sẽ "nhảy" nhẹ mỗi khi pan — sai.
+4. **Lọc lại lần cuối theo pixel thật** `x ∈ [0, mPlotWidth]` (không phải `[0, mWidth]` — xem cảnh báo `chartWidth` ở §3.1) — chỉ tick còn lọt trong dải này mới thực sự vẽ.
+5. Nếu bước 2-4 không cho ra tick nào (data quá thưa, hoặc mọi tick candidate đều bị lọc hết) — luôn có **fallback "never blank" (T1)**: lấy nến ở giữa viewport làm tick duy nhất, không bao giờ để trục trắng hoàn toàn.
+
+Kết quả (`List<TimeTick> {index, x, label}`) được **cache tĩnh** theo key `(barSpacing làm tròn px, identity dataset, intervalMs, format)` — chỉ tính lại khi zoom/data/format đổi, KHÔNG tính lại mỗi frame lúc pan (pan chỉ đổi `translateX`, không đổi tick nào được chọn, nhờ invariant I4).
+
+**Format nhãn** (chữ hiển thị trên mỗi tick) — 2 chế độ:
+- **Adaptive** (mặc định): chữ đổi theo chính `tickWeight` của tick đó — `YEAR→"2026"`, `MONTH→"Aug"`, `DAY→"10"`, còn lại→`"09:05"` (giờ:phút). Escalate dần theo mức "tròn lịch".
+- **Forced** (khi container truyền `timeFormat`/`chartStyle.dateTimeFormat`): MỌI tick dùng CHUNG 1 format cố định, bỏ qua `tickWeight` hoàn toàn.
+
+`gridRows` (lưới ngang) vẫn cố định `4` (không phụ thuộc data) — không đổi so với trước.
 
 ### 3.4 Bảng tổng hợp — chỗ nào áp `scaleX`, chỗ nào áp `scaleY`
 
@@ -296,14 +322,14 @@ Bảng đầy đủ theo từng vùng/phần tử vẽ:
 | Secondary indicator: MACD/KDJ/RSI/WR/CCI/OBV/TRIX/MTM/StochRSI/BRAR/BIAS/PSY | ✅ | ❌ | (a) chỉ scope A |
 | Đường tham chiếu ngang nét đứt (vd 20/80 của StochRSI) | ❌ | ❌ | (c) vẽ TRƯỚC cả scope A — screen space thuần, không giãn theo zoom nào |
 | Grid (lưới ngang/dọc mọi panel) | ❌ | ❌ | (c) vẽ ngoài mọi transform |
-| **⚠️ Crosshair — 2 đường dashed + chấm tròn** (`drawCrossLine`) | ✅ | ❌ *(dùng Y thô, KHÔNG đúng theo zoom)* | (a) chỉ scope A — xem cảnh báo dưới |
-| **⚠️ Crosshair — badge giá + badge ngày** (`drawCrossLineText`) | (b) vị trí X tính tay qua `translateXtoX` (đúng theo `scaleX`) | ❌ *(dùng Y thô)* | (b)/(c) hỗn hợp — xem cảnh báo dưới |
-| **⚠️ Trend-line** (đoạn thẳng xu hướng do user vẽ tay) | ✅ | ❌ *(dùng scale/max/contentTop CHỤP LẠI từ lần `getY()` gần nhất — tức Y thô)* | (a) chỉ scope A — xem cảnh báo dưới |
-| Label trục Y (giá) — main/vol/secondary (`drawVerticalText`) | ❌ | ✅ **đúng theo zoom** | (b) reverse-transform tính tay qua `scaleY`/`offsetY`/`centerY` để suy ra đúng giá trị nhãn ứng với mỗi dòng lưới |
-| Label trục X (ngày/giờ, `drawDate`) | (b) vị trí cột tính tay qua `xToTranslateX`/`indexOfTranslateX` (đúng theo `scaleX`) | ❌ | (b) |
+| **⚠️ Crosshair — 2 đường dashed + chấm tròn** (`drawCrossLine`) | ✅, span ngang clip cứng ở `x=plotWidth` (KHÔNG tràn vào priceAxisRect — xem §3.1/§4) | ❌ *(dùng Y thô, KHÔNG đúng theo zoom)* | (a) chỉ scope A — xem cảnh báo dưới |
+| **⚠️ Crosshair — badge giá + badge ngày** (`drawCrossLineText`) | (b) vị trí X tính tay qua `translateXtoX`, điều kiện trái/phải + clamp 2 mép dùng `plotWidth` (KHÔNG PHẢI `width`, đúng theo `scaleX`) | ❌ *(dùng Y thô)* | (b)/(c) hỗn hợp — xem cảnh báo dưới |
+| **⚠️ Trend-line** (đoạn thẳng xu hướng do user vẽ tay) | ✅, clip cứng `x=plotWidth` cùng crosshair | ❌ *(dùng scale/max/contentTop CHỤP LẠI từ lần `getY()` gần nhất — tức Y thô)* | (a) chỉ scope A — xem cảnh báo dưới |
+| Label trục Y (giá) — main/vol/secondary (`drawVerticalText`) | ❌ | ✅ **đúng theo zoom** | (b) reverse-transform tính tay qua `scaleY`/`offsetY`/`centerY` để suy ra đúng giá trị nhãn ứng với mỗi dòng lưới; vẽ vào `priceAxisRect` (§4) |
+| Label trục X (ngày/giờ, `drawDate`) | (b) vị trí cột tính tay qua `xToTranslateX`/`indexOfTranslateX` (đúng theo `scaleX`); clip cứng vào `[0, plotWidth] × dateRect` | ❌ | (b) |
 | Label indicator góc trên (`drawText`) | ❌ | ❌ | (c) vị trí cố định mỗi frame, không phụ thuộc zoom nào |
-| Label max/min giá (`drawMaxAndMin`) | (b) qua `translateXtoX` — **đúng theo zoom** | (b) qua `_applyScaleY` — **đúng theo zoom** | (b) |
-| Now-price (đường kẻ + badge giá hiện tại, `drawNowPrice`) | (b) — trên thực tế tương đương "full chiều rộng màn hình" vì bị `clipRect` ở mép | (b) qua `_applyScaleY` — **đúng theo zoom** | (b) |
+| Label max/min giá (`drawMaxAndMin`) | (b) qua `translateXtoX`, so với `plotWidth/2` để quyết định trái/phải — **đúng theo zoom** | (b) qua `_applyScaleY` — **đúng theo zoom** | (b) |
+| Now-price (đường kẻ + badge giá hiện tại, `drawNowPrice`) | (b) — `offsetX` (khi `VerticalTextAlignment.right`, mặc định) tính từ `plotWidth` (KHÔNG PHẢI `width`) — badge dừng đúng mép strip giá, không tràn vào | (b) qua `_applyScaleY` — **đúng theo zoom** | (b) |
 
 > **⚠️ MUST MATCH — Crosshair và Trend-line KHÔNG theo `scaleY`/`offsetY`, dù bản thân nến/main-indicator CÓ bị zoom dọc.** Đây là hệ quả trực tiếp của việc `drawCrossLine`/`drawCrossLineText`/`drawTrendLines` gọi `getMainY(...)`/`getY(...)` — hàm map Y **cơ bản** (`(maxValue - v) * scaleY_nộibộ + rectTop`, không liên quan gì tới tham số zoom `scaleY`/`offsetY` của widget) — mà KHÔNG bọc qua `_applyScaleY` như `drawNowPrice`/`drawMaxAndMin` đã làm đúng. Hệ quả quan sát được: nếu user pinch/kéo để zoom dọc main chart (`scaleY != 1` hoặc `offsetY != 0`) rồi long-press để bật crosshair, đường kẻ ngang + chấm + badge giá của crosshair sẽ **lệch khỏi vị trí thực của nến trên màn hình** (hiển thị như thể `scaleY=1, offsetY=0`), trong khi bản thân nến/MA/BOLL/SAR... vẫn hiển thị đúng vị trí đã zoom. Tương tự cho các đoạn trend-line lịch sử (dùng lại `trendLineMax/trendLineScale/trendLineContentRec` — 3 biến toàn cục được `MainRenderer.getY()` "chụp" lại mỗi lần gọi, cũng là giá trị **chưa** áp zoom).
 >
@@ -364,23 +390,31 @@ Ngoại suy tuyến tính đơn giản — đúng cho thị trường 24/7 (cryp
 
 ## 4. Layout — chia vùng vẽ
 
-Xếp dọc từ trên xuống (mọi rect full-width, chỉ khác nhau chiều cao & vị trí top/bottom):
+**Chia đôi theo chiều NGANG trước tiên** (CHART_AXES.md §7) — canvas thật (`width`) tách thành khối **plot** bên trái (nến/volume/secondary/lưới/trục thời gian) và **strip trục giá** riêng bên phải (label giá của MỌI panel, không panel nào vẽ đè label giá lên nội dung của mình nữa như bản cũ):
 
 ```
-┌─────────────────────────────────────────────┐
-│ topPadding = chartStyle.topPadding(20)        │
-│            + 12 × (số main indicator)         │  ← mỗi main indicator có 1 dòng label cao 12px
-├─────────────────────────────────────────────┤
-│              mainRect                          │  candles + main indicators
-├─────────────────────────────────────────────┤  (padding 10px cố định nếu vol hiện)
-│  volRect  (nếu volHidden=false)               │  cao = secondaryPanelHeight (mặc định = baseHeight×0.2)
-├─────────────────────────────────────────────┤
-│  secondaryRect[0]                              │  cao = secondaryPanelHeight, mỗi panel + childPadding(12) trên
-│  secondaryRect[1]                              │
-│  ...                                           │
-├─────────────────────────────────────────────┤
-│  dateRect  (cao = bottomPadding = 16)         │  trục thời gian, luôn ở đáy cùng
-└─────────────────────────────────────────────┘
+plotWidth      = max(1.0, width - priceAxisWidth)
+priceAxisWidth = xem công thức riêng bên dưới — TRỄ ĐÚNG 1 FRAME so với label thật (xem cảnh báo)
+```
+
+Rồi mới xếp DỌC từ trên xuống **bên trong khối plot** (mọi rect trong khối này rộng `plotWidth`, KHÔNG PHẢI full `width` — khác bản trước khi có strip giá riêng):
+
+```
+┌───────────────────────────────────────┬──────────────┐
+│ topPadding = chartStyle.topPadding(20)  │              │
+│            + 12 × (số main indicator)   │              │  ← mỗi main indicator có 1 dòng label cao 12px
+├───────────────────────────────────────┤  priceAxisRect │
+│              mainRect                    │  (label giá  │  candles + main indicators
+├───────────────────────────────────────┤   MỌI panel,   │  (padding 10px cố định nếu vol hiện)
+│  volRect  (nếu volHidden=false)         │   cao = từ    │  cao = secondaryPanelHeight (mặc định = baseHeight×0.2)
+├───────────────────────────────────────┤  mainRect.top  │
+│  secondaryRect[0]                        │   → dateTop) │  cao = secondaryPanelHeight, mỗi panel + childPadding(12) trên
+│  secondaryRect[1]                        │              │
+│  ...                                     │              │
+├───────────────────────────────────────┼──────────────┤
+│  dateRect  (cao = bottomPadding = 16)   │  cornerRect   │  trục thời gian; cornerRect = ô chết, chỉ tô nền
+└───────────────────────────────────────┴──────────────┘
+                width = plotWidth                 priceAxisWidth
 ```
 
 Công thức chiều cao chính xác:
@@ -395,17 +429,42 @@ totalDisplayHeight = baseHeight + volumeHeight + totalSecondaryH + totalLabelHei
 
 topPadding  = 20 + totalLabelHeight
 mainHeight  = totalDisplayHeight - volumeHeight - totalSecondaryH - (volHidden ? 0 : 10)   // trừ thêm 10px cố định nếu có vol
-mainRect    = rect(0, topPadding, width, topPadding + mainHeight)
+mainRect    = rect(0, topPadding, plotWidth, topPadding + mainHeight)                       // rộng plotWidth, KHÔNG full width
 
-volRect (nếu hiện) = rect(0, mainRect.bottom + 12 + 10, width, mainRect.bottom + 10 + volumeHeight)
+volRect (nếu hiện) = rect(0, mainRect.bottom + 12 + 10, plotWidth, mainRect.bottom + 10 + volumeHeight)
                      // 12 = childPadding, 10 = hằng số cố định mPaddingMainChild (KHÔNG lấy từ style, luôn = 10)
 
 secondaryTop = (volRect ?? mainRect).bottom
-secondaryRect[i] = rect(0, secondaryTop + i*secondaryPanelH + 12, width, secondaryTop + i*secondaryPanelH + secondaryPanelH)
+secondaryRect[i] = rect(0, secondaryTop + i*secondaryPanelH + 12, plotWidth, secondaryTop + i*secondaryPanelH + secondaryPanelH)
 
 dateTop  = (secondaryRect.last ?? volRect ?? mainRect).bottom
-dateRect = rect(0, dateTop, width, dateTop + 16)
+dateRect = rect(0, dateTop, plotWidth, dateTop + 16)             // rộng plotWidth
+
+priceAxisRect = rect(plotWidth, mainRect.top, width, dateTop)    // cột phải, cao = main+vol+secondary (KHÔNG gồm dateRect)
+cornerRect    = rect(plotWidth, dateTop, width, dateTop + 16)    // ô chết góc dưới-phải — giao strip giá × trục thời gian
 ```
+
+**Bề rộng strip trục giá** (`priceAxisWidth`) — tự đo theo label rộng nhất đang hiển thị, clamp + làm tròn bội 8 + **hysteresis**:
+
+```
+raw      = clamp(maxLabelWidth + 14, 48, 96)
+required = ceil(raw / 8) * 8
+if required > priceAxisWidth OR required <= priceAxisWidth - 8:
+    priceAxisWidth = required
+// nếu không rơi vào 1 trong 2 điều kiện trên (đang trong "vùng chết" giữa
+// hiện tại và hiện tại-8), GIỮ NGUYÊN — đây chính là hysteresis: PHÌNH áp
+// ngay lập tức (label bị cắt còn tệ hơn 1 frame rộng dư), THU chỉ áp khi
+// thấp hơn hẳn 1 bậc 8px trọn vẹn — chống vòng lặp phản hồi width→plotWidth
+// →dải index hiển thị→range giá→label→width lặp vô hạn (nếu không có
+// hysteresis, 1 label dao động đúng ranh giới clamp có thể khiến width nảy
+// qua lại mỗi frame).
+```
+
+> **⚠️ `priceAxisWidth` tính TRỄ ĐÚNG 1 FRAME** — `updatePriceAxisWidth(maxLabelWidth)` chạy SAU khi đã layout+đo label ở frame hiện tại, nhưng kết quả chỉ áp dụng từ frame KẾ TIẾP (frame hiện tại vẫn dùng giá trị `priceAxisWidth` cũ đã có sẵn từ trước khi tính `mPlotWidth`). Đây là lựa chọn có chủ đích để cắt đứt vòng lặp phản hồi ở trên mà không cần biết trước label rộng bao nhiêu — port cần giữ đúng độ trễ 1 frame này (không được "sửa" thành đồng bộ trong cùng 1 frame, sẽ có nguy cơ dao động vô hạn nếu 1 giá trị label dao động đúng ranh giới bậc 8px).
+>
+> Seed mặc định lúc chưa có frame nào chạy: `priceAxisWidth = 64.0`.
+
+**MUST MATCH — clip ngang khối plot vào đúng `plotWidth`**: mọi nội dung vẽ trong khối plot (nến, volume, secondary, crosshair, trend-line — xem §3.1 "MUST MATCH") phải bị chặn cứng ở `x = plotWidth`, không được tràn sang `priceAxisRect`. Vòng lặp vẽ chỉ loại nến theo INDEX (`stopIndex`, §3.1) — nến ở gần biên vẫn được vẽ ĐỦ THÂN dù thân đó vượt qua `plotWidth` (rõ nhất khi zoom vào, `candleWidth` lớn) nếu không có clip cứng theo pixel đi kèm.
 
 Hằng số mặc định (đều override được qua style object phía container, trừ `mPaddingMainChild = 10` — hardcode, không expose):
 
@@ -419,7 +478,8 @@ Hằng số mặc định (đều override được qua style object phía conta
 | `candleLineWidth` (bấc nến) | 1.0 |
 | `volWidth` | 8.5 |
 | `gridRows` | 4 (cố định) |
-| `gridColumns` | tự tính, xem §3.3 |
+| `gridColumns` | **đã bỏ** — vị trí lưới dọc giờ theo weight-ladder, xem §3.3 |
+| `priceAxisWidth` | tự đo + hysteresis, xem công thức trên (seed `64.0`) |
 
 ### Vẽ nến (candlestick body/wick)
 
@@ -451,40 +511,51 @@ Pseudocode `paint()` đầy đủ, đúng thứ tự (thứ tự vẽ ảnh hư�
 
 ```
 paint(canvas, size):
-    clipRect(0,0,width,height)
-    initRect(size)                     // §4 — tính lại mọi rect (đổi mỗi frame vì size có thể đổi)
-    calculateValue()                   // tính lại maxScrollX, translateX, startIndex/stopIndex, min/max mỗi panel
-    initChartRenderer()                // tạo MainRenderer/VolRenderer/SecondaryRenderer mới, đọc min/max vừa tính
+    if size.width <= 0 or size.height <= 0: return   // layout pass đầu/animation collapse có thể giao size 0 — bỏ qua hẳn frame
+    clipRect(0,0,width,height)                        // clip TOÀN canvas — KHÔNG loại trừ priceAxisRect, chỉ chặn tràn ra ngoài widget
+    initRect(size)                     // §4 — tính lại mọi rect (plotWidth, mainRect, priceAxisRect... đổi mỗi frame vì size có thể đổi)
+    calculateValue()                   // tính lại maxScrollX, translateX, startIndex/stopIndex (rồi tách visible/real, §3.5),
+                                        // min/max mỗi panel, VÀ danh sách tick trục thời gian (mTimeTicks, §3.3)
+    initChartRenderer()                // tạo MainRenderer/VolRenderer/SecondaryRenderer mới, đọc min/max vừa tính;
+                                        // MainRenderer cũng tự tính lại priceTicks (nice-number, §3.2) + gọi
+                                        // updatePriceAxisWidth() cho frame KẾ TIẾP (§4)
 
-    drawBg(canvas)                     // vẽ nền — bỏ qua nếu có background logo watermark ở layer dưới
-    drawGrid(canvas)                   // lưới ngang/dọc mọi panel — bỏ qua nếu hideGrid=true
+    drawBg(canvas)                     // vẽ nền — PHỦ CẢ priceAxisRect (không riêng khối plot), tránh strip trông như lỗ trống
+    drawGrid(canvas):                  // lưới ngang/dọc mọi panel (dùng lại đúng mTimeTicks.x + priceTicks) — bỏ qua nếu hideGrid=true
+        if !hideGrid: vẽ lưới
+        drawAxisSeparators(canvas)     // LUÔN vẽ, KHÔNG phụ thuộc hideGrid — 2 đường viền khung: dọc tại x=plotWidth
+                                        // (ranh giới plot|priceAxis), ngang tại y=dateRect.top (ranh giới {plot,priceAxis}|{date,corner})
 
     if data không rỗng:
         drawChart(canvas):
             for mỗi secondary panel: drawReferenceLines()   // vẽ TRƯỚC transform, ở screen space (vd 20/80 StochRSI)
             canvas.save()
+            canvas.clipRect(0, 0, plotWidth, dateRect.top)  // MUST MATCH §3.1/§4 — chặn TRÀN vào priceAxisRect,
+                                                              // áp TRƯỚC translate/scale X nên nằm screen space
             canvas.translate(translateX*scaleX, 0); canvas.scale(scaleX, 1)   // transform X — áp cho TOÀN BỘ phần dưới
             canvas.save()
             canvas.clipRect(mainRect band mở rộng X)
             canvas.translate(0, centerY*(1-scaleY)+offsetY); canvas.scale(1, scaleY)   // transform Y — CHỈ áp main
-            for i in startIndex..stopIndex: MainRenderer.drawChart(candle[i-1], candle[i])
+            for i in realStartIndex..realStopIndex: MainRenderer.drawChart(candle[i-1], candle[i])   // §3.5 — dải RỘNG (đủ nến nguồn cho đường bị dịch)
             canvas.restore()            // kết thúc scope scaleY — vol/secondary KHÔNG bị ảnh hưởng
-            for i in startIndex..stopIndex:
+            for i in visibleStartIndex..visibleStopIndex:    // §3.5 — dải HẸP (đúng viewport ∩ dữ liệu thật)
                 VolRenderer.drawChart(candle[i-1], candle[i])
                 for mỗi SecondaryRenderer: .drawChart(candle[i-1], candle[i])
             if long-press hoặc (tap-to-show && isOnTap): drawCrossLine(canvas)
             if trend-line mode: drawTrendLines(canvas)
-            canvas.restore()             // kết thúc scope scaleX/translateX
+            canvas.restore()             // kết thúc scope scaleX/translateX (VÀ clip plotWidth vừa thêm)
 
-        drawVerticalText(canvas)        // label trục Y (main/vol/secondary), KHÔNG bị scaleX ảnh hưởng
-        drawDate(canvas)                // label trục X (thời gian)
-        drawText(canvas, candle[stopIndex])  // label indicator ở góc trên — LUÔN dùng candle bên PHẢI đang hiển thị,
-                                              // KHÔNG PHẢI candle cuối cùng của mảng — cập nhật theo vị trí scroll
+        drawVerticalText(canvas)        // label trục Y (main/vol/secondary) — vẽ vào priceAxisRect, KHÔNG bị scaleX ảnh hưởng
+        drawDate(canvas)                // label trục X (thời gian) — clip cứng vào [0, plotWidth] × dateRect, canvas tự
+                                          // cắt phần label trượt qua mép khi pan (không có logic ẩn/hiện riêng)
+        drawText(canvas, candle[visibleStopIndex])  // label indicator ở góc trên — LUÔN dùng candle bên PHẢI đang hiển thị
+                                              // THẬT (visibleStopIndex, không phải realStopIndex — có thể trỏ vùng tương lai
+                                              // — cũng không phải candle cuối mảng) — cập nhật theo vị trí scroll
         drawMaxAndMin(canvas)            // nhãn giá cao/thấp nhất trong vùng hiển thị — qua applyScaleY
-        drawNowPrice(canvas)             // đường + badge giá hiện tại — qua applyScaleY
+        drawNowPrice(canvas)             // đường + badge giá hiện tại — qua applyScaleY, offsetX theo plotWidth (không phải width)
 
         if long-press hoặc (tap-to-show && isOnTap):
-            drawCrossLineText(canvas)    // popup chi tiết + phát InfoWindow selection event
+            drawCrossLineText(canvas)    // popup chi tiết + phát InfoWindow selection event; bubble giá/ngày theo plotWidth
 ```
 
 **Kiểm soát khi nào vẽ lại (dirty-check)**: chỉ render lại khi ít nhất 1 trong các field sau đổi giá trị (so sánh theo **giá trị**, không phải reference, đặc biệt với mảng `data`/`trendLines` có thể bị mutate in-place):
@@ -533,9 +604,13 @@ isDrag, isScale: boolean
 **Lúc bắt đầu gesture** (`onScaleStart`), chốt 2 cờ **một lần duy nhất**, giữ nguyên suốt gesture:
 
 ```
-isScaleYGesture = (số ngón == 1) AND (điểm chạm.x nằm trong dải bên phải rộng effectiveRightPaddingPx())
-gestureInMain    = (điểm chạm nằm trong mainRect)
+isScaleYGesture = (số ngón == 1)
+               AND (điểm chạm.x nằm trong strip trục giá thật đang vẽ, bề rộng = priceAxisWidth, §4 — KHÔNG PHẢI effectiveRightPaddingPx, 2 khái niệm khác nhau: cái sau là padding SAU nến cuối cùng cho scroll bound §3.1, không liên quan diện tích strip hiển thị)
+               AND (điểm chạm.y <= mainRect.bottom)   // ⚠️ thêm sau — KHÔNG kích hoạt nếu chạm rơi vào strip đối diện panel volume/secondary
+gestureInMain    = (điểm chạm nằm trong mainRect)     // top = mainRect.top (SAU dải label topPadding, không tính dải đó)
 ```
+
+> **Vì sao cần điều kiện `y <= mainRect.bottom`**: `scaleY` chỉ scale MAIN chart (xem scope B ở bảng §3.4 — `VolRenderer`/`SecondaryRenderer` nằm ngoài scope này, không hề bị ảnh hưởng bởi `scaleY`). Nếu thiếu điều kiện này, kéo dọc ở ĐOẠN strip giá đối diện panel volume/RSI/MACD... vẫn kích hoạt `scaleY` của main chart — trải nghiệm sai (chạm vào 1 chỗ không liên quan gì tới main chart lại làm nó zoom). Thiếu điều kiện Y này là bug thật đã gặp trong bản Flutter gốc, mới fix — port nhớ có nó ngay từ đầu.
 
 **Trong lúc gesture cập nhật** (`onScaleUpdate`), rẽ nhánh theo đúng thứ tự ưu tiên sau (nhánh trên match trước thì bỏ qua nhánh dưới):
 
@@ -652,7 +727,7 @@ Tương tự, chỉnh `scaleY` bằng kéo 1 ngón trong dải phải KHÔNG neo
 ```
 gesture rơi vào nhánh 4 (§6.4) khi và chỉ khi TẤT CẢ đúng:
   - gestureInMain == true       (bắt đầu chạm BÊN TRONG mainRect)
-  - isScaleYGesture == false    (KHÔNG bắt đầu trong dải bên phải rộng effectiveRightPaddingPx())
+  - isScaleYGesture == false    (KHÔNG bắt đầu trong strip trục giá — xem công thức đầy đủ ở §6.4, không phải effectiveRightPaddingPx)
   - dragStartedInTapMode == false  (không phải đang kéo để di chuyển crosshair)
   - số ngón < 2 HOẶC pinchScale == 1.0   (không phải đang pinch)
 ```
@@ -725,7 +800,7 @@ mỗi frame animation: clamp scrollX vào [0, maxScrollX]; nếu chạm biên �
 ### 6.10 Double-tap (vùng bên phải — implement bằng 1 `GestureDetector` RIÊNG, tách khỏi gesture chính)
 
 ```
-onDoubleTap trong dải effectiveRightPaddingPx() bên phải mainRect:
+onDoubleTap trong dải priceAxisWidth (§4) bên phải, từ y=0 tới mainRect.bottom:
     scaleY = 1.0
     offsetY = 0.0
     phát onChartScaleChanged
@@ -736,7 +811,8 @@ onDoubleTap trong dải effectiveRightPaddingPx() bên phải mainRect:
 **Kích thước & vị trí vùng double-tap** — tính từ chính đoạn code này:
 
 ```
-width  = effectiveRightPaddingPx(xFrontPadding, constraints.maxWidth)   // giống công thức §3.1, constraints.maxWidth == full chart width
+width  = priceAxisWidth (§4)   // bề rộng strip trục giá THẬT đang vẽ — KHÔNG PHẢI effectiveRightPaddingPx (đó là
+                                 // padding sau nến cuối cho scroll bound §3.1, 2 khái niệm khác nhau, dễ nhầm)
 top    = 0                                                              // TỪ ĐỈNH CÙNG của toàn bộ Stack — bao gồm cả vùng label main indicator (topPadding)
 bottom = volumeHeight + totalSecondaryHeight + bottomPadding(16)        // tính từ ĐÁY Stack lên
        ⇒ tương đương: vùng double-tap kết thúc đúng tại mMainRect.bottom
@@ -744,14 +820,9 @@ bottom = volumeHeight + totalSecondaryHeight + bottomPadding(16)        // tính
          (tức PHỦ LUÔN dải topPadding phía trên nến — nơi hiển thị label "MA5:.. MA10:..", KHÔNG chỉ riêng mainRect)
 ```
 
-> **⚠️ Lệch hình học nhỏ so với vùng "kéo 1 ngón để CHỈNH `scaleY`"** (nhánh 2, §6.4): vùng đó xác định bằng `_gestureInMain = painter.isInMainRect(localFocalPoint)` — tức chỉ tính từ `mMainRect.top` (ngay trên nến, SAU dải label) trở xuống, KHÔNG bao gồm dải `topPadding`. Trong khi vùng double-tap-reset (widget ở trên) lại tính từ `y=0` (đỉnh cùng Stack, bao gồm cả dải `topPadding`). Hệ quả: double-tap **ngay trong dải label phía trên nến** (ở cột bên phải) vẫn reset được `scaleY`/`offsetY`, nhưng thử **kéo 1 ngón** ở đúng vị trí đó để chỉnh `scaleY` thì KHÔNG có tác dụng (rơi vào nhánh 0 "ngoài main" ở §6.4 vì nằm ngoài `mainRect`, không phải nhánh 2). Khi port, giữ đúng 2 vùng LỆCH NHAU này (đừng gộp chung thành 1 vùng y hệt cho cả 2 gesture, dù trực giác sẽ muốn làm vậy).
+> **Khớp CHÍNH XÁC với vùng "kéo 1 ngón để CHỈNH `scaleY`"** (nhánh 2, §6.4) — cả bề rộng (`priceAxisWidth`) lẫn phạm vi dọc (`y ∈ [0, mainRect.bottom]`, tức bao gồm cả dải `topPadding` phía trên nến) đều giống hệt nhau giữa 2 gesture. Đây là điểm CỐ TÌNH đồng bộ (không phải trùng hợp) — 2 cách kích hoạt cùng 1 mục đích ("tương tác với trục Y của main chart") nên phải cùng vùng nhận chạm, tránh trải nghiệm "double-tap reset được nhưng kéo tay không tác dụng" (hoặc ngược lại) ở cùng 1 điểm trên màn hình.
 >
-> Nguồn gốc: chính source code có để lại TODO xác nhận đây là chủ đích (không phải bug che giấu, nhưng CŨNG chưa "chốt" — có thể đổi):
-> ```
-> // TODO: bottom offset giới hạn vùng scaleY chỉ trong main chart
-> // nếu muốn gesture phủ toàn bộ thì đổi lại bottom: 0
-> ```
-> Tức là: hiện tại vùng double-tap chỉ tới `mMainRect.bottom` (không lan xuống vol/secondary/date) — double-tap trong panel volume/secondary (dù cùng cột x bên phải) sẽ KHÔNG reset `scaleY`/`offsetY`. Nếu muốn mở rộng vùng double-tap xuống hết chiều cao chart, đổi `bottom` thành `0` — nhưng ĐÂY LÀ THAY ĐỔI HÀNH VI so với bản gốc hiện tại, không phải hành vi mặc định cần port.
+> **Lịch sử — trước đây 2 vùng này LỆCH NHAU** (nhánh kéo-tay chỉ tính từ `mainRect.top` trở xuống qua `_gestureInMain = isInMainRect(...)`, không tính dải `topPadding`; double-tap thì tính từ `y=0`) — có 1 `TODO` trong code xác nhận đây là thiếu sót chưa xử lý (`// TODO: bottom offset giới hạn vùng scaleY chỉ trong main chart`). Đã fix bằng cách thêm điều kiện `y <= mainRect.bottom` trực tiếp vào `isScaleYGesture` (§6.4) — không dùng `_gestureInMain`/`isInMainRect` cho nhánh này nữa, nên tự động khớp `top=0` với vùng double-tap mà không cần chỉnh gì thêm ở phía double-tap.
 >
 > **Widget-tree note riêng (không ảnh hưởng hành vi, chỉ ảnh hưởng hiệu năng khi port sang framework có re-render tương tự Flutter)**: `LayoutBuilder` chỉ bọc `Positioned` (không bọc `GestureDetector` lớn ở ngoài) — cố ý, để tránh phần còn lại của cây widget (đặc biệt info-dialog dùng stream/subscription single-listener) bị rebuild oan mỗi khi kích thước đổi.
 
@@ -853,6 +924,12 @@ PHA 2 (bất đồng bộ, SAU 1 frame layout — CHỈ chạy khi restore xảy
 | `onChartScaleChanged` | `(ScaleState) → void` | Xem §6.4/§6.10. |
 | `controller` | Controller? | `reset()`/`zoomIn()`/`zoomOut()` điều khiển từ ngoài — xem §1. |
 | `isTrendLine` | boolean | Bật chế độ vẽ đoạn thẳng xu hướng bằng tap. |
+| `timeFormat` | string[]? | Ép format CỐ ĐỊNH cho MỌI tick trục X + label crosshair, bỏ qua hẳn `tickWeight` — xem §3.3 "Format nhãn". `null` (mặc định) = adaptive theo `tickWeight`. |
+| `verticalTextAlignment` | enum `left`/`right` | Panel giá (`priceAxisRect`, §4) + badge now-price/crosshair nằm bên trái hay phải. Mặc định `right`. |
+| `showInfoDialog`, `materialInfoDialog` | boolean | Bật/tắt popup chi tiết khi long-press/tap, và style Material hay tự custom hoàn toàn qua `detailBuilder`. |
+| `mBaseHeight` | number | Chiều cao main chart do caller truyền — input của công thức layout §4. |
+| `mSecondaryHeight` | number? | Ép chiều cao mỗi panel volume/secondary — `null` = tự tính `baseHeight × 0.2` (§4). |
+| `chartStyle`, `chartColors` | — | Toàn bộ hằng số kích thước + màu sắc — xem §10. |
 
 ---
 
@@ -1192,6 +1269,8 @@ Mỗi indicator có style riêng (đường/màu label) — bảng đầy đủ 
 
 Hằng số kích thước quan trọng khác: `crossWidth=0.8`, `nowPriceLineWidth=0.8`, `borderWidth=0.5` (viền badge/crosshair selector).
 
+2 đường phân cách khung strip trục giá (§4 `drawAxisSeparators`, dọc tại `x=plotWidth` + ngang tại `y=dateRect.top`) dùng LẠI đúng màu `Grid` ở trên (`gridColor`), `strokeWidth=0.5` — không phải màu/hằng số riêng.
+
 ---
 
 ## 11. DepthChart — widget độc lập
@@ -1249,11 +1328,13 @@ Danh sách nên viết test đối chiếu số/giá trị (golden test) giữa 
 - [ ] Test riêng Ichimoku (§3.5/§9.1) — mây (Span A/B) hiển thị dịch tới trước đủ `shift` nến bên phải nến cuối, KHÔNG bị cắt cụt kể cả khi đã scroll/pan tới sát mép phải; Chikou dừng đúng trước nến cuối `shift` slot; đổi `calcParams[1]` (kijun) → vùng tương lai chừa ra tự đổi theo, không hardcode `26`.
 - [ ] Test 3 phạm vi index của §3.5 KHÔNG bị lẫn: label max/min giá + autoscale trục Y (main/volume/secondary) + label chỉ số góc trên CHỈ được phản ánh nến đang thực sự hiển thị (`visibleStartIndex..visibleStopIndex`) — bật 1 indicator có `futureShift > 0`, scroll tới giữa lịch sử (không phải mép mới nhất), xác nhận các label/autoscale này KHÔNG bị ảnh hưởng bởi nến nằm ngoài viewport (dù nến đó vẫn nằm trong vùng "real" mở rộng dùng để vẽ). Đây là lớp bug dễ tái phát nhất khi thêm indicator dịch trục thứ 2 trong tương lai.
 - [ ] Test chart có `itemCount < shift` (chưa đủ nến cho Ichimoku warm-up đầy đủ) — không vẽ đường/mây rác kéo về 0, và cơ chế mở rộng trục X (`mFutureSlots`) không tạo ra state bất thường khi hầu như toàn bộ mảng vẫn `null`.
-- [ ] Với cùng chuỗi gesture ghi lại (sequence các `dx/dy/scale/pointerCount` theo thời gian), assert `scaleX/scrollX/scaleY/offsetY` cuối cùng khớp — đặc biệt test case chạm vùng phải (`effectiveRightPaddingPx`) để kích hoạt đúng `isScaleYGesture`.
-- [ ] Test `effectiveRightPaddingPx` với vài `chartWidth` khác reference (< 375px) — đảm bảo tỷ lệ co giãn đúng.
+- [ ] Với cùng chuỗi gesture ghi lại (sequence các `dx/dy/scale/pointerCount` theo thời gian), assert `scaleX/scrollX/scaleY/offsetY` cuối cùng khớp — đặc biệt test case chạm vùng phải (dải `priceAxisWidth`, §4 — KHÔNG PHẢI `effectiveRightPaddingPx`) VÀ trong khoảng `y ∈ [0, mainRect.bottom]` để kích hoạt đúng `isScaleYGesture` (§6.4); test thêm case chạm ĐÚNG cột X đó nhưng `y > mainRect.bottom` (ngang hàng volume/secondary) — PHẢI KHÔNG kích hoạt `isScaleYGesture`.
+- [ ] Test `effectiveRightPaddingPx` với vài `mPlotWidth` khác reference (< 375px) — đảm bảo tỷ lệ co giãn đúng (đây là công thức padding scroll ở §3.1, tham số truyền vào giờ là `mPlotWidth` chứ không phải full canvas width — khác zone test ở dòng trên).
 - [ ] Test 4 trigger `onLoadMore` (§6.8) độc lập, đặc biệt trigger (d) — mount với data ít hơn 1 màn hình, không gesture nào, vẫn phải tự bắn `onLoadMore(true)` đúng 1 lần (không lặp lại khi re-render không đổi độ dài data).
 - [ ] Test `formatCompact` quanh ngưỡng `9999`/`10000`/`999999`/`1000000` để bắt lỗi nhầm số chia (§8.3).
 - [ ] Test layout heights (§4) với tổ hợp `volHidden × số main indicator × số secondary indicator` khác nhau — đối chiếu từng rect top/bottom.
+- [ ] Test `priceAxisWidth` (§4): đổi giá trị label giá qua ngưỡng dài/ngắn nhiều lần liên tục trong vài frame liền — xác nhận có **hysteresis** (chỉ THU khi thấp hơn hẳn 1 bậc 8px, PHÌNH áp ngay) và **trễ đúng 1 frame** (frame vừa đo label rộng hơn KHÔNG được co giãn `plotWidth` ngay lập tức trong CHÍNH frame đó). Test riêng: zoom vào để nến/volume/secondary đè lên `priceAxisRect` (nếu thiếu clip §3.1/§4 sẽ thấy đè trước khi "biến mất" khi scroll — lớp bug đã gặp thật, KHÔNG chỉ lý thuyết).
+- [ ] Test weight-ladder tick trục X (§3.3): pan (đổi `scrollX`, giữ nguyên `scaleX`) KHÔNG được đổi tick nào đang được chọn (invariant I4) — chỉ đổi tick nào đang lọt viewport `[0, plotWidth]`. Test riêng zoom liên tục (đổi `barSpacing` mỗi frame) — không có 2 tick liền kề nào cách nhau dưới `MIN_GAP_X=64px`, và trục KHÔNG BAO GIỜ trắng hoàn toàn (fallback "never blank").
 - [ ] Test màu nến doji (`open == close`) rơi vào nhánh `upColor` (§4, "vẽ nến").
 - [ ] Test `scaleY`/`offsetY` KHÔNG ảnh hưởng panel volume/secondary (chỉ ảnh hưởng main) — regression dễ xảy ra nhất khi port canvas transform sang nền tảng không có ma trận transform composable.
 - [ ] Test riêng: set `scaleY != 1` (hoặc `offsetY != 0`) rồi bật crosshair/trend-line (§3.4) — xác nhận bản port cố ý chọn 1 trong 2 hành vi (giữ nguyên quirk "crosshair lệch theo Y" của Flutter gốc, hoặc chủ động fix bằng `_applyScaleY`) chứ không lệch ngẫu nhiên do vô tình bỏ sót.

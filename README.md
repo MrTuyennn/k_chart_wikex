@@ -5,15 +5,15 @@ A Flutter candlestick chart package with support for multiple technical indicato
 ## Features
 
 - Candlestick and line chart rendering
-- **Free pan:** drag 1 ngón tay di chuyển chart theo cả X (scroll nến) lẫn Y (dịch vùng giá)
+- **Free pan:** drag 1 ngón tay scroll nến (X) luôn; dịch vùng giá (Y) thêm khi đã zoom Y trước đó (`scaleY != 1.0`)
 - **Zoom X:** pinch 2 ngón tay, giới hạn bởi `minScale` / `maxScale`
-- **Zoom Y:** drag dọc trong vùng phải chart (width tỷ lệ `xFrontPadding`, co khi chart hẹp)
-- **Double tap** vùng phải: reset zoom Y và pan Y về mặc định
+- **Zoom Y:** drag dọc trong strip trục giá bên phải, ngang hàng main chart (width tự đo theo label giá, co khi chart hẹp; strip ngang hàng volume/secondary KHÔNG kích hoạt — chỉ scale main chart)
+- **Double tap** cùng vùng: reset zoom Y và pan Y về mặc định
 - **Tap-to-toggle crosshair:** tap hiện crosshair, tap lại ẩn; kéo khi crosshair đang hiện sẽ di chuyển crosshair thay vì scroll
 - **Price labels đồng bộ scaleY + offsetY:** labels trục Y luôn hiển thị đúng giá theo vị trí visual của nến
 - Fling (quán tính) khi scroll, không fling khi đang kéo crosshair
-- **Main indicators:** MA, EMA, BOLL, SAR, ZigZag, SuperTrend, AVL
-- **Secondary indicators:** MACD, KDJ, RSI, WR, CCI, OBV, TRIX, MTM, StochRSI
+- **Main indicators (8):** MA, EMA, BOLL, SAR, ZigZag, SuperTrend, AVL, Ichimoku
+- **Secondary indicators (13):** MACD, KDJ, RSI, WR, CCI, OBV, TRIX, MTM, StochRSI, BRAR, BIAS, PSY, ATR
 - Volume bar chart with MA5 / MA10 overlay
 - Long-press info dialog with custom `detailBuilder`
 - Programmatic control via `KChartController` (zoom in/out, reset)
@@ -95,7 +95,7 @@ KChartWidget(
   showNowPrice: true,
   showInfoDialog: true,
   mBaseHeight: 300,
-  timeFormat: TimeFormat.yearMonthDayWithHour,
+  // timeFormat: omitted → adaptive time labels (recommended default, see "Time format" below)
   onLoadMore: (isLeft) {
     // load more data when user scrolls to the edge
   },
@@ -120,6 +120,7 @@ KChartWidget(
 | `ZigZagIndicator()`     | ZigZag                             | 12, 2, 5       |
 | `SuperTrendIndicator()` | SuperTrend                         | 10, 30         |
 | `AVLIndicator()`        | Average Value Line (Binance-style) | — (no period)  |
+| `IchimokuIndicator()`   | Ichimoku Kinko Hyo (5 lines + cloud) | 9, 26, 52    |
 
 ### Secondary indicators (panel below chart)
 
@@ -134,6 +135,10 @@ KChartWidget(
 | `TRIXIndicator()`     | Triple Exponential Average | 12, 20         |
 | `MTMIndicator()`      | Momentum                   | 12, 6          |
 | `StochRSIIndicator()` | Stochastic RSI             | 14, 14, 3, 3   |
+| `BRARIndicator()`     | Popularity/Willingness Index | 26           |
+| `BIASIndicator()`     | Bias Ratio                 | 6, 12, 24      |
+| `PSYIndicator()`      | Psychological Line         | 12, 6          |
+| `ATRIndicator()`      | Average True Range         | 14, 6          |
 
 Volume hiển thị trong panel riêng giữa main chart và date axis. Toggle bằng `volHidden`.
 
@@ -176,7 +181,7 @@ DataUtil.calculateAll(data, mainIndicators, secondaryIndicators);
 | `showInfoDialog`        | `bool`                     | `true`                    | Show info on long-press/tap         |
 | `isTapShowInfoDialog`   | `bool`                     | `false`                   | Single tap shows crosshair + dialog |
 | `materialInfoDialog`    | `bool`                     | `true`                    | Material vs Cupertino dialog style  |
-| `timeFormat`            | `List<String>`             | `TimeFormat.yearMonthDay` | Time label format on X axis         |
+| `timeFormat`            | `List<String>?`            | `null`                    | Force 1 fixed format for every X-axis tick. `null` (default) = adaptive: format escalates with each tick's calendar weight (year → month → day → `HH:mm`) — see [Time format](#time-format) |
 | `fixedLength`           | `int`                      | `2`                       | Decimal places for price labels     |
 | `verticalTextAlignment` | `VerticalTextAlignment`    | `right`                   | Price label side (`left`/`right`)   |
 | `hideGrid`              | `bool`                     | `false`                   | Hide grid lines                     |
@@ -193,7 +198,7 @@ DataUtil.calculateAll(data, mainIndicators, secondaryIndicators);
 
 | Parameter    | Type                | Default             | Description                     |
 | ------------ | ------------------- | ------------------- | ------------------------------- |
-| `minScale`   | `double`            | `0.5`               | Minimum zoom scale X            |
+| `minScale`   | `double`            | `0.2`                | Minimum zoom scale X            |
 | `maxScale`   | `double`            | `2.2`               | Maximum zoom scale X            |
 | `flingTime`  | `int`               | `600`               | Fling animation duration (ms)   |
 | `flingRatio` | `double`            | `0.5`               | Fling velocity multiplier       |
@@ -326,12 +331,10 @@ KChartWidget(
 
 | Gesture                     | Hành động                                                 |
 | --------------------------- | --------------------------------------------------------- |
-| 1 ngón kéo ngang            | Scroll qua các nến (X)                                    |
-| 1 ngón kéo dọc              | Pan vùng giá lên/xuống (Y)                                |
-| 1 ngón kéo tự do            | Scroll X + pan Y đồng thời                                |
+| 1 ngón kéo tự do trong main chart | Scroll X (luôn); pan Y **chỉ khi đã zoom Y trước đó** (`scaleY != 1.0`) — cả 2 trục cập nhật CÙNG lúc trên 1 cú kéo chéo, không tách riêng thành 2 gesture |
 | Pinch 2 ngón                | Zoom scaleX (thu phóng số nến hiển thị)                   |
-| Kéo dọc vùng phải chart     | Zoom scaleY (thu phóng vùng giá; width ∝ `xFrontPadding`) |
-| Double tap vùng phải        | Reset scaleY và offsetY về mặc định                       |
+| Kéo dọc strip trục giá bên phải, ngang hàng main chart | Zoom scaleY (thu phóng vùng giá) — strip ngang hàng volume/secondary KHÔNG kích hoạt |
+| Double tap cùng vùng        | Reset scaleY và offsetY về mặc định                       |
 | Tap vào nến                 | Hiện crosshair + info dialog                              |
 | Tap lại                     | Ẩn crosshair                                              |
 | Kéo khi crosshair đang hiện | Di chuyển crosshair theo ngón tay                         |
@@ -524,7 +527,9 @@ detailBuilder: (KLineEntity entity) {
 
 ## Time format
 
-Use predefined formats or build your own:
+**Default (`timeFormat: null` — recommended):** adaptive. Which candles get a tick, and where, is decided by a weight-ladder algorithm (each candle scored by whether it lands on a calendar boundary — start of hour/day/month/year in local time); the label TEXT on each tick then escalates with that tick's weight — a year-boundary tick shows `"2026"`, a month-boundary tick shows `"Aug"`, a day-boundary tick shows `"10"`, everything else shows `"09:05"`. This keeps the X axis readable across every zoom level without you specifying anything.
+
+**Force 1 fixed format for every tick** — use a predefined format or build your own (`List<String>`, tokens from `lib/utils/date_format_util.dart`: `yyyy`, `yy`, `mm`, `dd`, `hour24Padded`, `nn`...):
 
 ```dart
 // 2024-01-15
@@ -536,6 +541,8 @@ timeFormat: TimeFormat.yearMonthDayWithHour
 // custom
 timeFormat: const [yyyy, '/', mm, '/', dd]
 ```
+
+Forcing a format only changes the TEXT on each tick — tick *selection* (which candles get a label, spacing, pan/zoom stability) is unaffected either way.
 
 ---
 
@@ -565,7 +572,7 @@ KChartWidget(
 
 ## Example
 
-See the full working demo in the [`example/`](example/lib/main.dart) folder — bloc-based, kết nối REST + WebSocket thật (kline lịch sử, live tick, order book), toggle theme/indicator, tất cả 7 main + 9 secondary indicator có sẵn để bật thử.
+See the full working demo in the [`example/`](example/lib/main.dart) folder — bloc-based, kết nối REST + WebSocket thật (kline lịch sử, live tick, order book), toggle theme/indicator, tất cả 8 main + 13 secondary indicator có sẵn để bật thử (mặc định tắt hết, tự bật qua chip).
 
 Demo cần file env chứa endpoint thật (git-ignored — không commit trong repo). Tạo từ template rồi điền giá trị:
 
