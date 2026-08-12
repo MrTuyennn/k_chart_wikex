@@ -6,6 +6,16 @@ Tổ chức theo **ngày** (mới nhất ở trên). Với các mốc đã đón
 
 ---
 
+## 2026-08-12
+
+- **fix (từ `/code-review` — 5 finding, đều đã verify độc lập bằng cách đọc lại code trước khi sửa):**
+  - **`kline_merge.dart` — so khớp "cùng nến" bằng `||` (thêm 08-11) là AMBIGUOUS, có thể rớt mất nến live:** tick ĐẦU TIÊN của 1 nến MỚI thật sự (đọc theo open-time) có giá trị đúng bằng `existing.time + intervalMs` — Y HỆT giá trị "nến CŨ đọc theo close-time". Nếu giả thuyết WS gửi close-time SAI (WS thật ra gửi open-time, chưa verify được), mọi tick của nến mới cứ merge nhầm liên tục vào nến CŨ đã đóng, nến mới không bao giờ có slot riêng — rớt mất đúng phân nửa số nến live. Sửa: `_isSameCandle` dùng đồng hồ tường (`nowMs`, tham số `now` mới, mặc định `DateTime.now()`) làm trọng tài — nến ĐANG CHẠY thật sự (dù đọc kiểu nào) luôn phải chứa "bây giờ" trong `[openTime, openTime+intervalMs)`; tại 1 thời điểm chỉ đúng 1 cách đọc thoả điều kiện này, dùng nó thay vì đoán mù. Fallback về so `==` trực tiếp khi không phân xử được (tick trễ/backfill).
+    - File: `example/lib/bloc/kline_merge.dart`, `example/lib/bloc/chart_bloc.dart` (không đổi call site, `now` optional), `example/test/kline_merge_test.dart` (2 test mới khoá lại đúng 2 nhánh phân xử — cùng 1 giá trị timestamp mập mờ, khác `now`, ra 2 kết quả khác nhau).
+  - **`chart_painter.dart` — 3 chỗ dùng nhầm `mWidth` thay vì `mPlotWidth`, đè lên price-axis strip (sót lại từ đợt viết lại trục X/Y §7):** `drawNowPriceLine`'s badge giá live (`offsetX`, mặc định `VerticalTextAlignment.right`); `drawCrossLineText`'s bubble giá crosshair (điều kiện trái/phải + vị trí) và bubble ngày dưới đáy (điều kiện clamp 2 mép). Cả 3 giờ dùng `mPlotWidth`, khớp đúng pattern `drawMaxAndMin` đã sửa từ trước.
+  - **`main_renderer.dart` — `_priceAtScreenY` (hàm nghịch đảo mới, tính range giá đang hiển thị cho tick) lệch 5px so với `getY` nó nghịch đảo:** `getY` neo tại `_contentRect.top` (`chartRect.top + _contentPadding`), nhưng `_priceAtScreenY` neo tại `chartRect.top` thẳng — khiến `effectiveMinPrice`/`effectiveMaxPrice` sai lệch ~`_contentPadding/scaleY` đơn vị giá, rõ nhất khi zoom Y ra xa (scaleY nhỏ). Sửa: đổi sang `_contentRect.top`.
+  - **`base_chart_painter.dart` — `mGridColumns` dead field:** gán từ `chartStyle.gridColumns` nhưng không còn chỗ nào đọc (grid dọc giờ hoàn toàn theo `mTimeTicks`) — set `KChartStyle(gridColumns: ...)` không còn tác dụng gì mà không có cảnh báo nào. Bỏ dòng gán, giữ nguyên field public `gridColumns` trên `KChartStyle` (không breaking API).
+  - File: `example/lib/bloc/kline_merge.dart`, `example/test/kline_merge_test.dart`, `lib/renderer/chart_painter.dart`, `lib/renderer/main_renderer.dart`, `lib/renderer/base_chart_painter.dart`.
+
 ## 2026-08-11
 
 - **fix (example app):** `_onRealtimeFlushed` (`ChartBloc`) merge tick WS vào nến đang chạy qua `mergeKlineBar`/`mergeIntoRunningCandle` (`example/lib/bloc/kline_merge.dart`) — sửa 2 điều liên quan tới báo lỗi "nhãn trục thời gian hiện giờ tương lai" (khung 15', chưa tới giờ mà trục đã hiện mốc sau):

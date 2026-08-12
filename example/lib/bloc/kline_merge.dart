@@ -14,23 +14,29 @@ import '../market/market_kline.dart';
 /// reference đổi mà repaint.
 ///
 /// [intervalMs]: độ dài 1 nến theo timeframe đang chọn (`ChartTimeframe.
-/// interval.inMilliseconds`) — cần để [_isSameCandle] chấp nhận cả 2 cách
-/// đọc timestamp WS (xem doc ở đó).
+/// interval.inMilliseconds`) — cần để [_isSameCandle] phân xử open-time vs
+/// close-time (xem doc ở đó). [now]: chỉ dùng để test tất định — mặc định
+/// `DateTime.now()` thật.
 List<KLineEntity> mergeKlineBar(
   List<KLineEntity> series,
   MarketKline bar, {
   required int intervalMs,
+  DateTime? now,
 }) {
   final int t = bar.barCloseTime.millisecondsSinceEpoch;
+  final int nowMs = (now ?? DateTime.now()).toUtc().millisecondsSinceEpoch;
   if (series.isEmpty) return [bar.toEntity()];
-  if (_isSameCandle(t, series.last.time!, intervalMs)) {
+  if (_isSameCandle(t, series.last.time!, intervalMs, nowMs)) {
     return [...series]
       ..[series.length - 1] = mergeIntoRunningCandle(series.last, bar);
   }
-  if (t > series.last.time! + intervalMs) return [...series, bar.toEntity()];
+  // Không match "nến cuối" ở trên — nếu t đã ở slot kế tiếp trở đi thì chắc
+  // chắn là nến mới (kể cả khi t == lastTime+intervalMs nhưng _isSameCandle
+  // vừa phân xử KHÔNG phải cùng nến, vd wall-clock đã sang nến mới thật).
+  if (t >= series.last.time! + intervalMs) return [...series, bar.toEntity()];
   for (var i = series.length - 1; i >= 0; i--) {
     final int ti = series[i].time!;
-    if (_isSameCandle(t, ti, intervalMs)) {
+    if (_isSameCandle(t, ti, intervalMs, nowMs)) {
       return [...series]..[i] = mergeIntoRunningCandle(series[i], bar);
     }
     if (ti < t) return [...series]..insert(i + 1, bar.toEntity());
@@ -44,15 +50,41 @@ List<KLineEntity> mergeKlineBar(
 /// **Không giả định cứng** WS gửi `time` theo open hay close time — 2 quy
 /// ước này khác nhau tuỳ sàn/endpoint, và REST (`market_history_api.dart`)
 /// đã verify thực tế là open-time trong khi WS chưa verify được (không có
-/// công cụ snoop socket ở môi trường phát triển) — nếu WS thật ra gửi
-/// close-time (= open-time + `intervalMs`), so khớp CỨNG theo `==` sẽ khiến
-/// tick WS đầu tiên của 1 nến KHÔNG match được nến đang có (lệch đúng
-/// 1 interval), rơi vào nhánh "nến mới" và tạo ra 1 entry TRÙNG nến nhưng
-/// timestamp tương lai — đúng triệu chứng "label hiện giờ chưa tới, cả nến
-/// cũ cũng sai" đã gặp. Chấp nhận cả 2 cách đọc ở đây an toàn dù giả thuyết
-/// đúng hay sai (không làm hỏng trường hợp WS thật sự gửi open-time).
-bool _isSameCandle(int wsTime, int existingTime, int intervalMs) =>
-    wsTime == existingTime || wsTime == existingTime + intervalMs;
+/// công cụ snoop socket ở môi trường phát triển).
+///
+/// **Vì sao KHÔNG thể chỉ chấp nhận cả 2 cách đọc bằng `||` đơn giản** (cách
+/// làm trước đó, phát hiện ambiguous qua `/code-review`): tick ĐẦU TIÊN của
+/// 1 nến MỚI thật sự — đọc theo open-time — có giá trị đúng bằng
+/// `existingTime + intervalMs`, Y HỆT giá trị "nến CŨ, đọc theo close-time".
+/// 2 trường hợp này không thể phân biệt chỉ bằng phép so `==`; chấp nhận mù
+/// cả 2 khiến MỌI tick của 1 nến mới (nếu WS thật ra dùng open-time) cứ liên
+/// tục bị merge nhầm vào nến CŨ đã đóng — nến mới không bao giờ có slot
+/// riêng, rớt mất phân nửa số nến live.
+///
+/// **Cách phân xử**: dùng đồng hồ tường ([nowMs]) làm trọng tài. Nến ĐANG
+/// CHẠY thật sự — dù WS gửi open hay close time — luôn phải chứa thời điểm
+/// "bây giờ" trong khoảng nửa-mở `[openTime, openTime+intervalMs)`. Tại bất
+/// kỳ thời điểm nào, chỉ ĐÚNG 1 trong 2 cách đọc (`wsTime` = open-time, hay
+/// `wsTime - intervalMs` = open-time) thoả điều kiện này — dùng nó để quyết
+/// định thay vì đoán mù. Nếu cả 2 hoặc không cách nào thoả (tick trễ/backfill/
+/// đồng hồ lệch — hay gặp nhất trong test dùng timestamp giả lập xa "bây giờ"
+/// thật), fallback về so khớp trực tiếp `==` (an toàn hơn suy diễn sai).
+bool _isSameCandle(int wsTime, int existingTime, int intervalMs, int nowMs) {
+  final int openIfOpenTime = wsTime;
+  final int openIfCloseTime = wsTime - intervalMs;
+  bool isFormingNow(int openTime) =>
+      openTime <= nowMs && nowMs < openTime + intervalMs;
+
+  final bool openTimeFormingNow = isFormingNow(openIfOpenTime);
+  final bool closeTimeFormingNow = isFormingNow(openIfCloseTime);
+  if (openTimeFormingNow && !closeTimeFormingNow) {
+    return openIfOpenTime == existingTime;
+  }
+  if (closeTimeFormingNow && !openTimeFormingNow) {
+    return openIfCloseTime == existingTime;
+  }
+  return openIfOpenTime == existingTime || openIfCloseTime == existingTime;
+}
 
 /// Công thức merge 1 tick WS vào nến ĐANG CHẠY (trùng `barCloseTime` với nến
 /// cuối/đang có) — theo `trade_candle_chart_data_flow.md` §3.2. KHÔNG thay

@@ -107,7 +107,7 @@ abstract class BaseChartPainter extends CustomPainter {
       mBottomPadding = 16.0,
       mChildPadding = 12.0,
       mPaddingMainChild = 10.0;
-  int mGridRows = 4, mGridColumns = 4;
+  int mGridRows = 4;
   int mStartIndex = 0, mStopIndex = 0;
 
   /// Tick trục thời gian đã chọn cho frame hiện tại — tính 1 lần trong
@@ -192,7 +192,9 @@ abstract class BaseChartPainter extends CustomPainter {
     mBottomPadding = chartStyle.bottomPadding;
     mChildPadding = chartStyle.childPadding;
     mGridRows = chartStyle.gridRows;
-    mGridColumns = chartStyle.gridColumns;
+    // mGridColumns từng dùng ở đây nhưng đã bỏ — vertical grid giờ hoàn
+    // toàn do mTimeTicks (TimeTickPlanner) quyết định, không còn chia đều
+    // cột theo chartStyle.gridColumns nữa (xem CHART_AXES.md §5).
     for (final ind in mainIndicators) {
       if (ind.futureShift > mFutureSlots) mFutureSlots = ind.futureShift;
     }

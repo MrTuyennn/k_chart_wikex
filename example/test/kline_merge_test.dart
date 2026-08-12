@@ -152,12 +152,15 @@ void main() {
     });
 
     test(
-      'bar barCloseTime = existing.time + intervalMs (WS gửi close-time) → vẫn merge, không tạo nến trùng tương lai',
+      'barCloseTime = existing.time + intervalMs, wall-clock CÒN trong nến cũ '
+      '(WS gửi close-time) → phân xử là CÙNG nến, merge, không tạo nến trùng tương lai',
       () {
-        // Giả lập WS gửi close-time thay vì open-time: nến đang chạy có
-        // open-time=1000, interval=1000ms → WS tick đầu gửi barCloseTime=2000
-        // (= 1000 + 1000). Nếu so khớp cứng theo == sẽ KHÔNG match, rơi vào
-        // nhánh append và tạo entry trùng nến với timestamp "tương lai".
+        // Nến đang chạy: open-time=1000, interval=1000ms. WS gửi
+        // barCloseTime=2000 (= 1000+1000, mập mờ giữa "open-time nến MỚI" và
+        // "close-time nến CŨ"). Đồng hồ tường "bây giờ" = 1500 — vẫn nằm
+        // trong [1000, 2000) của nến cũ → phải hiểu là close-time, merge vào
+        // nến đang có, KHÔNG tạo nến mới với timestamp "tương lai" (đúng bug
+        // gốc đã gặp).
         final series = [
           KLineEntity.fromCustom(time: 1000, open: 100, high: 101, low: 99, close: 100, vol: 5),
         ];
@@ -165,11 +168,38 @@ void main() {
           series,
           _kline(closeTimeMs: 2000, open: 999, high: 102, low: 98, close: 101, volume: 6),
           intervalMs: 1000,
+          now: DateTime.fromMillisecondsSinceEpoch(1500, isUtc: true),
         );
         expect(result.length, 1); // merge vào nến đang có, KHÔNG append mới
         expect(result.single.time, 1000); // timestamp giữ nguyên open-time cũ
         expect(result.single.open, 100); // giữ open cũ
         expect(result.single.close, 101); // close mới từ WS
+      },
+    );
+
+    test(
+      'barCloseTime = existing.time + intervalMs, wall-clock ĐÃ SANG nến mới '
+      '(WS gửi open-time, nến MỚI thật sự) → phân xử là nến KHÁC, append — '
+      'không bị merge nhầm vào nến cũ (lỗ hổng phát hiện qua /code-review, '
+      'trước đây "||" ambiguous sẽ merge nhầm ở đây và rớt mất nến)',
+      () {
+        // Cùng giá trị timestamp mập mờ (2000) như test trên, nhưng đồng hồ
+        // tường đã sang 2200 — tức đã QUA ranh giới 2000, nến MỚI (open-
+        // time=2000) đang thực sự chạy. Đây chính là tick ĐẦU TIÊN của nến
+        // mới đọc theo open-time thật — phải append, không phải merge.
+        final series = [
+          KLineEntity.fromCustom(time: 1000, open: 100, high: 101, low: 99, close: 100, vol: 5),
+        ];
+        final result = mergeKlineBar(
+          series,
+          _kline(closeTimeMs: 2000, open: 200, high: 205, low: 195, close: 202, volume: 3),
+          intervalMs: 1000,
+          now: DateTime.fromMillisecondsSinceEpoch(2200, isUtc: true),
+        );
+        expect(result.length, 2); // nến mới có slot RIÊNG, không bị gộp mất
+        expect(result.first.time, 1000); // nến cũ giữ nguyên, không bị sửa
+        expect(result.first.close, 100);
+        expect(result.last.time, 2000); // nến mới đúng open-time của nó
       },
     );
 

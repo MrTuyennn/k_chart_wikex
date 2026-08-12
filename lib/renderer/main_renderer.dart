@@ -116,7 +116,9 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
         : externalScaleY;
     final double yContent =
         scaleCenterY + (yScreen - offsetY - scaleCenterY) / safeExternalScaleY;
-    return maxValue - (yContent - chartRect.top) / scaleY;
+    // Nghịch đảo ĐÚNG của getY() (dùng _contentRect.top, KHÔNG phải
+    // chartRect.top — lệch _contentPadding=5px nếu dùng nhầm, xem getY()).
+    return maxValue - (yContent - _contentRect.top) / scaleY;
   }
 
   static const int _kTargetPriceTicks = 6;

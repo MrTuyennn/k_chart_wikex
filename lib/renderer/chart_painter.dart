@@ -405,7 +405,7 @@ class ChartPainter extends BaseChartPainter {
     double x;
     double space = 4.0;
     bool isLeft = false;
-    if (translateXtoX(getX(index)) < mWidth / 2) {
+    if (translateXtoX(getX(index)) < mPlotWidth / 2) {
       isLeft = false;
       x = space;
       RRect rect = RRect.fromLTRBR(
@@ -420,11 +420,11 @@ class ChartPainter extends BaseChartPainter {
       tp.paint(canvas, Offset(x + w1, y - textHeight / 2));
     } else {
       isLeft = true;
-      x = mWidth - textWidth - 2 * w1 - space;
+      x = mPlotWidth - textWidth - 2 * w1 - space;
       RRect rect = RRect.fromLTRBR(
         x,
         y - r,
-        mWidth - space,
+        mPlotWidth - space,
         y + r,
         Radius.circular(2.0),
       );
@@ -444,8 +444,8 @@ class ChartPainter extends BaseChartPainter {
 
     if (x < textWidth + 2 * w1) {
       x = 1 + textWidth / 2 + w1;
-    } else if (mWidth - x < textWidth + 2 * w1) {
-      x = mWidth - 1 - textWidth / 2 - w1;
+    } else if (mPlotWidth - x < textWidth + 2 * w1) {
+      x = mPlotWidth - 1 - textWidth / 2 - w1;
     }
 
     RRect rectBox = RRect.fromLTRBR(
@@ -576,7 +576,7 @@ class ChartPainter extends BaseChartPainter {
         offsetX = space;
         break;
       case VerticalTextAlignment.right:
-        offsetX = mWidth - tp.width - paddingX * 2 - space;
+        offsetX = mPlotWidth - tp.width - paddingX * 2 - space;
         break;
     }
 
