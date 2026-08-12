@@ -192,7 +192,10 @@ class _KChartWidgetState extends State<KChartWidget>
   static const double _minScaleY = 0.3;
   static const double _maxScaleY = 5.0;
   bool isScale = false, isDrag = false, isLongPress = false, isOnTap = false;
-  // true khi gesture bắt đầu trong strip trục giá bên phải (width = _priceAxisWidthCache.value) → drag dọc = scaleY
+  // true khi gesture bắt đầu trong strip trục giá bên phải (width =
+  // _priceAxisWidthCache.value) VÀ nằm trong phạm vi dọc của main chart
+  // (painter.mMainRect) → drag dọc = scaleY. Strip đối diện volume/secondary
+  // panel KHÔNG kích hoạt (mScaleY chỉ scale main chart).
   bool _isScaleYGesture = false;
   // true khi drag bắt đầu trong lúc crosshair đang hiển thị → drag di chuyển crosshair thay vì scroll
   bool _dragStartedInTapMode = false;
@@ -460,12 +463,26 @@ class _KChartWidgetState extends State<KChartWidget>
         // phải (§7.7 "price axis | drag vertical | scale Y") — dùng đúng
         // `priceAxisWidth` đang vẽ (§7.6), không phải xFrontPadding (đó là
         // padding sau nến cuối, không liên quan diện tích strip hiển thị).
+        //
+        // Giới hạn thêm theo TRỤC Y: chỉ tính là scaleY gesture khi chạm nằm
+        // trong đúng phần strip giá ĐỐI DIỆN MAIN CHART (`painter.mMainRect`,
+        // tính cả phần topPadding phía trên nó) — KHÔNG tính khi chạm rơi vào
+        // phần strip đối diện volume/secondary indicator panel. `mScaleY` chỉ
+        // scale main chart (indicator phụ nằm ngoài scope canvas.scale này —
+        // xem `ChartPainter.drawChart`), nên gesture ở strip ngang hàng
+        // indicator phụ không nên kích hoạt scaleY của main. Đồng bộ với vùng
+        // double-tap-reset (`Positioned` bên dưới trong `build()`), vốn đã
+        // giới hạn đúng theo `bottom: mVolumeHeight + totalSecondaryHeight +
+        // bottomPadding` từ trước — trước đây chỉ nhánh double-tap bị giới
+        // hạn, nhánh drag ở đây thì không, gây lệch hành vi giữa 2 nhánh.
         final renderBox = context.findRenderObject() as RenderBox?;
         final width = renderBox?.size.width ?? 0.0;
         final zoneWidth = _priceAxisWidthCache.value;
+        final double dy = details.localFocalPoint.dy;
         _isScaleYGesture =
             details.pointerCount == 1 &&
-            details.localFocalPoint.dx > width - zoneWidth;
+            details.localFocalPoint.dx > width - zoneWidth &&
+            dy <= painter.mMainRect.bottom;
         // Gesture bắt đầu trong vol/secondary/date → chart không xử lý
         // scroll/scale, chỉ forward delta Y cho outer scroll.
         _gestureInMain = painter.isInMainRect(details.localFocalPoint);
@@ -647,13 +664,13 @@ class _KChartWidgetState extends State<KChartWidget>
             size: Size(double.infinity, baseDimension.mDisplayHeight),
             painter: painter,
           ),
-          // Vùng scaleY + double-tap reset: width đồng bộ với strip trục giá
-          // thật đang vẽ (§7.6/§7.7) — không còn xFrontPadding (đó là padding
-          // sau nến cuối, không phải bề rộng trục giá hiển thị).
+          // Vùng double-tap reset: width đồng bộ với strip trục giá thật
+          // đang vẽ (§7.6/§7.7) — không còn xFrontPadding (đó là padding sau
+          // nến cuối, không phải bề rộng trục giá hiển thị). `bottom` chỉ
+          // tính tới hết main chart (loại vol/secondary/date) — cùng phạm vi
+          // dọc với gesture DRAG scaleY ở `onScaleStart` (xem `_isScaleYGesture`).
           // LayoutBuilder chỉ bọc Positioned (không bọc GestureDetector ngoài) để tránh
           // rebuild cả StreamBuilder → lỗi stream single-subscription.
-          // TODO: bottom offset giới hạn vùng scaleY chỉ trong main chart
-          // nếu muốn gesture phủ toàn bộ thì đổi lại bottom: 0
           Positioned(
             right: 0,
             top: 0,
