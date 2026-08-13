@@ -592,15 +592,6 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const SizedBox(
-                width: 12,
-                height: 12,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.black,
-                ),
-              ),
-              const SizedBox(width: 8),
               Text(
                 'Đang tải thêm ${ChartState.loadMoreBatchSize} nến...',
                 style: const TextStyle(color: Colors.black, fontSize: 12),
@@ -612,24 +603,46 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
         // chỗ trong 1 Row cố định trên màn hình hẹp (RenderFlex overflow).
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 4, 0, 0),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.only(right: 12),
-            child: Row(
-              children: [
-                for (final tf in ChartTimeframe.values) ...[
-                  _chip(
-                    tf.label,
-                    state.timeframe == tf,
-                    state.isDark,
-                    () => context.read<ChartBloc>().add(
-                      ChartTimeframeChanged(tf),
+          child: Row(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Row(
+                    children: [
+                      for (final tf in ChartTimeframe.values) ...[
+                        _chip(
+                          tf.label,
+                          state.timeframe == tf,
+                          state.isDark,
+                          () => context.read<ChartBloc>().add(
+                            ChartTimeframeChanged(tf),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: () => _showSettingsSheet(context, state),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  child: Text(
+                    'setting',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: state.isDark ? Colors.white60 : Colors.black54,
                     ),
                   ),
-                  const SizedBox(width: 6),
-                ],
-              ],
-            ),
+                ),
+              ),
+            ],
           ),
         ),
         Padding(
@@ -728,6 +741,7 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
         kLineColor: accentColor,
         kLineFillColors: const [Color(0x33F0B90B), Color(0x00F0B90B)],
         textStyle: TextStyle(fontSize: 10, color: textColor),
+        bodyStyle: state.candleBodyStyle,
       ),
       volumeStyle: VolumeStyle(
         upColor: upColor,
@@ -1299,6 +1313,218 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
         fontWeight: FontWeight.w600,
         color: isDark ? Colors.white38 : Colors.black38,
         letterSpacing: 0.5,
+      ),
+    );
+  }
+
+  // Bọc BlocBuilder riêng cho sheet (thay vì dùng thẳng `state` chụp tại lúc
+  // mở) để chọn kiểu nến cập nhật tick chọn ngay trong sheet mà không cần
+  // đóng/mở lại.
+  void _showSettingsSheet(BuildContext context, ChartState outerState) {
+    final bloc = context.read<ChartBloc>();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true, // cho phép sheet cao hơn nửa màn hình mặc định
+      backgroundColor: outerState.isDark
+          ? const Color(0xFF1E2329)
+          : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        return BlocProvider.value(
+          value: bloc,
+          child: BlocBuilder<ChartBloc, ChartState>(
+            builder: (context, state) {
+              return SafeArea(
+                // Panel preview 200px của item chọn có thể đẩy tổng chiều
+                // cao vượt màn hình (nhất là landscape/màn nhỏ) — bọc scroll
+                // để cuộn thay vì overflow, KHÔNG bỏ Column min vì sheet vẫn
+                // phải co theo nội dung khi ngắn.
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 36,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: state.isDark
+                                ? Colors.white24
+                                : Colors.black12,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                      Text(
+                        'Settings',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: state.isDark ? Colors.white : Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Kiểu K-line',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: state.isDark
+                              ? Colors.white60
+                              : Colors.black54,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      for (final opt in _candleStyleOptions(state, bloc))
+                        _candleStyleRow(
+                          label: opt.label,
+                          selected: opt.selected,
+                          isDark: state.isDark,
+                          onTap: opt.onTap,
+                          preview: opt.preview,
+                        ),
+                      const SizedBox(height: 6),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.of(sheetContext).pop(),
+                          child: const Text('Đóng'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  /// 5 lựa chọn "Kiểu K-line" theo đúng thứ tự/label ảnh mẫu: 4 kiểu nến +
+  /// 1 line chart. `selected` của 4 kiểu nến luôn kèm `!state.isLine` — line
+  /// chart không có "thân nến" nên không được coi là khớp `candleBodyStyle`.
+  /// Chọn 1 trong 4 kiểu nến cũng tắt `isLine` (phòng trường hợp đang ở line
+  /// chart); chọn "Đường" chỉ bật `isLine`, giữ nguyên `candleBodyStyle` cũ.
+  List<({String label, bool selected, VoidCallback onTap, Widget preview})>
+  _candleStyleOptions(ChartState state, ChartBloc bloc) {
+    void selectCandle(CandleBodyStyle style) {
+      bloc.add(const ChartLineModeChanged(false));
+      bloc.add(ChartCandleBodyStyleChanged(style));
+    }
+
+    bool isCandle(CandleBodyStyle style) =>
+        !state.isLine && state.candleBodyStyle == style;
+
+    return [
+      (
+        label: 'Solid',
+        selected: isCandle(CandleBodyStyle.solid),
+        onTap: () => selectCandle(CandleBodyStyle.solid),
+        preview: const CandleStylePreview.candle(
+          bodyStyle: CandleBodyStyle.solid,
+        ),
+      ),
+      (
+        label: 'Hollow',
+        selected: isCandle(CandleBodyStyle.hollow),
+        onTap: () => selectCandle(CandleBodyStyle.hollow),
+        preview: const CandleStylePreview.candle(
+          bodyStyle: CandleBodyStyle.hollow,
+        ),
+      ),
+      (
+        label: 'Hollow tăng',
+        selected: isCandle(CandleBodyStyle.hollowUp),
+        onTap: () => selectCandle(CandleBodyStyle.hollowUp),
+        preview: const CandleStylePreview.candle(
+          bodyStyle: CandleBodyStyle.hollowUp,
+        ),
+      ),
+      (
+        label: 'Hollow giảm',
+        selected: isCandle(CandleBodyStyle.hollowDown),
+        onTap: () => selectCandle(CandleBodyStyle.hollowDown),
+        preview: const CandleStylePreview.candle(
+          bodyStyle: CandleBodyStyle.hollowDown,
+        ),
+      ),
+      (
+        label: 'Đường',
+        selected: state.isLine,
+        onTap: () => bloc.add(const ChartLineModeChanged(true)),
+        preview: const CandleStylePreview.line(),
+      ),
+    ];
+  }
+
+  /// 1 card trong list "Kiểu K-line" — LUÔN hiện đủ (không thu gọn vào
+  /// dropdown), viền nổi bật khi đang chọn. Chỉ item đang chọn mới xổ ra
+  /// panel [preview] cao 160 ngay dưới label; item chưa chọn chỉ là 1 card
+  /// mỏng có label, giữ list gọn giống ảnh mẫu (không dùng radio icon —
+  /// chọn/không chọn thể hiện qua viền).
+  Widget _candleStyleRow({
+    required String label,
+    required bool selected,
+    required bool isDark,
+    required VoidCallback onTap,
+    required Widget preview,
+  }) {
+    final borderColor = selected
+        ? (isDark ? Colors.white : Colors.black87)
+        : (isDark ? Colors.white12 : Colors.black12);
+    final cardColor = isDark
+        ? const Color(0xFF1E2329)
+        : const Color(0xFFF2F3F5);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: borderColor, width: selected ? 2 : 1),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                color: textColor,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+            if (selected) ...[
+              const SizedBox(height: 10),
+              Container(
+                height: 160,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? const Color(0xFF181A20)
+                      : Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 12,
+                ),
+                child: preview,
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

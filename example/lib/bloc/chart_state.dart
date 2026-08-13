@@ -104,6 +104,7 @@ class ChartState extends Equatable {
     required this.secondaryTypes,
     required this.savedChartScale,
     required this.isLine,
+    required this.candleBodyStyle,
     required this.volHidden,
     required this.isDark,
     required this.showDepth,
@@ -122,6 +123,10 @@ class ChartState extends Equatable {
   final Set<SecondaryIndicatorType> secondaryTypes;
   final KChartScaleState savedChartScale;
   final bool isLine;
+
+  /// Solid/Hollow Up/Hollow Down/Hollow — xem [CandleBodyStyle]. Chỉ áp dụng
+  /// khi [isLine] = false (candlestick mode).
+  final CandleBodyStyle candleBodyStyle;
   final bool volHidden;
   final bool isDark;
   final bool showDepth;
@@ -156,6 +161,7 @@ class ChartState extends Equatable {
     Set<SecondaryIndicatorType>? secondaryTypes,
     KChartScaleState? savedChartScale,
     bool? isLine,
+    CandleBodyStyle? candleBodyStyle,
     bool? volHidden,
     bool? isDark,
     bool? showDepth,
@@ -174,6 +180,7 @@ class ChartState extends Equatable {
       secondaryTypes: secondaryTypes ?? this.secondaryTypes,
       savedChartScale: savedChartScale ?? this.savedChartScale,
       isLine: isLine ?? this.isLine,
+      candleBodyStyle: candleBodyStyle ?? this.candleBodyStyle,
       volHidden: volHidden ?? this.volHidden,
       isDark: isDark ?? this.isDark,
       showDepth: showDepth ?? this.showDepth,
@@ -248,6 +255,7 @@ class ChartState extends Equatable {
     secondaryTypes,
     savedChartScale,
     isLine,
+    candleBodyStyle,
     volHidden,
     isDark,
     showDepth,

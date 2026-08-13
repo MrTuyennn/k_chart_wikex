@@ -331,8 +331,10 @@ File chính import: `package:k_chart_jk/k_chart_plus.dart`. Re-export:
 | Export                              | Chứa gì                                                                              |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
 | `k_chart_widget.dart`               | `KChartWidget`, `TimeFormat`, `WidgetDetailBuilder`                                  |
-| `styles/k_chart_style.dart`         | `KChartStyle`, `KChartColors`                                                        |
+| `styles/k_chart_style.dart`         | `KChartStyle`, `KChartColors`, `CandleStyle`, `CandleBodyStyle`                      |
 | `styles/depth_chart_style.dart`     | `DepthChartStyle`, `DepthChartColors`                                                |
+| `styles/candle_style/candle_style_icon.dart`    | `CandleStyleIcon` — icon nhỏ (2 nến mini) minh hoạ 1 `CandleBodyStyle`, vẽ bằng `CustomPainter`. |
+| `styles/candle_style/candle_style_preview.dart` | `CandleStylePreview` — preview lớn (nến hoặc line chart) trên chuỗi giá tổng hợp cố định, dùng cho UI chọn "Kiểu K-line". |
 | `depth_chart.dart`                  | `DepthChart` widget                                                                  |
 | `chart_translations.dart`           | `DepthChartTranslations`                                                             |
 | `utils/index.dart`                  | `DataUtil`, `dateFormat`, `NumberUtil`, format tokens                                |
@@ -588,6 +590,30 @@ Constructor: `const KChartStyle([List<String>? dateTimeFormat, double volBarOpac
 | `kLineColor`       | `0xFF217AFF`         | Đường line chart (`isLine = true`).                              |
 | `kLineFillColors`  | gradient blue        | Gradient tô dưới đường line chart.                               |
 | `textStyle`        | `fontSize: 10`       | Text main chart: trục giá/thời gian, crosshair, label indicator, max/min, now-price. |
+| `bodyStyle`        | `CandleBodyStyle.solid` | Kiểu vẽ thân nến (candlestick mode) — xem ngay dưới.          |
+
+**`CandleBodyStyle`** (`MainRenderer.drawCandle`) — 4 giá trị, giống "Candle style" của TradingView/Binance:
+
+| Giá trị       | Thân nến tô đặc / chỉ viền                              |
+| ------------- | --------------------------------------------------------- |
+| `solid`       | Luôn tô đặc cả 2 chiều (mặc định, hành vi gốc).           |
+| `hollowUp`    | Nến tăng (`close > open` CHÍNH nến đó) chỉ viền, nến giảm vẫn đặc. |
+| `hollowDown`  | Nến giảm chỉ viền, nến tăng vẫn đặc.                      |
+| `hollow`      | Cả 2 chiều đều chỉ viền.                                  |
+
+Bấc nến (high-low) LUÔN vẽ đặc. Khi thân RỖNG, bấc chỉ vẽ 2 đoạn thò ra ngoài
+thân (`high` → đỉnh thân, đáy thân → `low`) — KHÔNG vẽ đoạn cắt ngang ruột
+thân, để thân thực sự rỗng (không có gạch xuyên giữa). `chartPaint` (dùng
+chung cho cả `MainRenderer`, kể cả `drawLine` của trend line/now-price) được
+reset `style`/`strokeWidth` về mặc định ngay sau khi vẽ xong 1 thân rỗng —
+không để lại state cho lần vẽ kế tiếp.
+
+Preview UI (không phải core rendering): `CandleStyleIcon` (icon nhỏ) và
+`CandleStylePreview` (preview lớn, nến hoặc line chart trên chuỗi giá tổng
+hợp cố định) ở `lib/styles/candle_style/` — vẽ lại đúng logic đặc/rỗng của
+`drawCandle` để không lệch hình so với chart thật. Ví dụ dùng trong
+`example/lib/main.dart` (`_showSettingsSheet` → "Kiểu K-line", 5 lựa chọn:
+4 `CandleBodyStyle` + "Đường" ứng với `isLine = true`).
 
 #### `VolumeStyle` — panel volume
 

@@ -90,6 +90,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     on<ChartMainIndicatorToggled>(_onMainIndicatorToggled);
     on<ChartSecondaryIndicatorToggled>(_onSecondaryIndicatorToggled);
     on<ChartLineModeChanged>(_onLineModeChanged);
+    on<ChartCandleBodyStyleChanged>(_onCandleBodyStyleChanged);
     on<ChartVolumeVisibilityToggled>(_onVolumeVisibilityToggled);
     on<ChartThemeToggled>(_onThemeToggled);
     on<ChartDepthVisibilityChanged>(_onDepthVisibilityChanged);
@@ -192,6 +193,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
           : {},
       savedChartScale: KChartScaleState(),
       isLine: false,
+      candleBodyStyle: CandleBodyStyle.solid,
       volHidden: false,
       isDark: false,
       showDepth: false,
@@ -576,6 +578,13 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     Emitter<ChartState> emit,
   ) {
     emit(state.copyWith(isLine: event.isLine));
+  }
+
+  void _onCandleBodyStyleChanged(
+    ChartCandleBodyStyleChanged event,
+    Emitter<ChartState> emit,
+  ) {
+    emit(state.copyWith(candleBodyStyle: event.bodyStyle));
   }
 
   void _onVolumeVisibilityToggled(

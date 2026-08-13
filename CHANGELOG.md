@@ -6,6 +6,17 @@ Tổ chức theo **ngày** (mới nhất ở trên). Với các mốc đã đón
 
 ---
 
+## 2026-08-13
+
+- **feat:** `CandleBodyStyle` — 4 kiểu vẽ thân nến candlestick (`solid`/`hollowUp`/`hollowDown`/`hollow`), giống "Candle style" TradingView/Binance. Bấc nến luôn đặc; khi thân rỗng, bấc chỉ vẽ 2 đoạn thò ra ngoài thân (không cắt ngang ruột) để thân thực sự rỗng.
+  - File: `lib/styles/k_chart_style.dart` (enum + field `CandleStyle.bodyStyle`, mặc định `solid` — không đổi hành vi cũ), `lib/renderer/main_renderer.dart` (`drawCandle`/`_drawCandleBody`/`_isHollowCandle` viết lại theo `bodyStyle`).
+- **feat:** `CandleStyleIcon` + `CandleStylePreview` (`lib/styles/candle_style/`) — 2 widget vẽ bằng `CustomPainter` (không dùng asset ảnh) minh hoạ `CandleBodyStyle`: icon nhỏ (2 nến mini) và preview lớn (nến hoặc line chart, `CandleStylePreview.line()`) trên chuỗi giá tổng hợp cố định (không random — ổn định giữa các lần rebuild). Vẽ lại đúng logic đặc/rỗng của `MainRenderer.drawCandle` để không lệch hình so với chart thật. Export qua `lib/k_chart_plus.dart`.
+  - **test:** `test/candle_style_preview_test.dart` (mới, 8 test) — verify bằng `paints` matcher của `flutter_test` (bắt canvas call thật `drawRect`/`drawPath` + `Paint.style`/`color`, không cần golden image): `solid` không có rect nào `PaintingStyle.stroke`; `hollow`/`hollowUp`/`hollowDown` có; `.line()` vẽ `drawPath` stroke đúng `lineColor`, không vẽ `drawRect` nào; kích thước suy biến (`height=0`) không throw ở cả 2 widget. Đây là test **render/CustomPainter đầu tiên** trong repo — trước giờ `test/indicator/` chỉ cover `calc()` (hàm số học thuần), không cover canvas drawing; dùng `paints` (built-in `flutter_test`, đọc trực tiếp display-list call, không cần dựng hạ tầng golden-file mới) thay vì mở rộng theo pattern `test/indicator/`.
+- **feat (example app):** Nút "setting" cạnh hàng timeframe mở bottom sheet Settings — mục "Kiểu K-line" hiện 5 card (Solid/Hollow/Hollow tăng/Hollow giảm/Đường), card đang chọn viền nổi bật + xổ preview `CandleStylePreview` ngay dưới. "Đường" chuyển `isLine = true` (line chart thật, không phải mock); 4 card còn lại đổi `candleBodyStyle` kèm tắt `isLine`.
+  - File: `example/lib/bloc/chart_event.dart` (`ChartCandleBodyStyleChanged`), `example/lib/bloc/chart_state.dart` (field `candleBodyStyle`), `example/lib/bloc/chart_bloc.dart` (handler + default `CandleBodyStyle.solid`), `example/lib/main.dart` (`_showSettingsSheet`, `_candleStyleOptions`, `_candleStyleRow`; sheet đổi `isScrollControlled: true` + `SingleChildScrollView` — panel preview 200px có thể đẩy nội dung vượt màn hình nhỏ).
+- **fix (review lại khi viết feature trên, chưa gây lỗi thấy được — phòng ngừa):** `_drawCandleBody` set `chartPaint.strokeWidth = mCandleLineWidth` khi vẽ thân rỗng nhưng không reset lại — vô hại hiện tại vì `mCandleLineWidth` (`KChartStyle.candleLineWidth`) trùng đúng giá trị mặc định `1.0` của `chartPaint`, nhưng `chartPaint` dùng chung cho `drawLine` (trend line/now-price) nên nếu 2 giá trị này lệch nhau trong tương lai sẽ rò rỉ `strokeWidth` sang lần vẽ khác. Thêm reset `strokeWidth = 1.0` cạnh reset `style` đã có sẵn.
+  - File: `lib/renderer/main_renderer.dart`.
+
 ## 2026-08-12
 
 - **fix (từ `/code-review` — 5 finding, đều đã verify độc lập bằng cách đọc lại code trước khi sửa):**
