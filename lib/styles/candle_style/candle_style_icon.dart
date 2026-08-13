@@ -83,12 +83,9 @@ class _CandleStyleIconPainter extends CustomPainter {
     final bodyBottom = size.height * 0.72;
     final bodyRect = Rect.fromLTRB(cx - r, bodyTop, cx + r, bodyBottom);
 
-    final hollow = switch (bodyStyle) {
-      CandleBodyStyle.solid => false,
-      CandleBodyStyle.hollowUp => rising,
-      CandleBodyStyle.hollowDown => !rising,
-      CandleBodyStyle.hollow => true,
-    };
+    // Nguồn sự thật duy nhất: CandleBodyStyleX.isHollow (k_chart_style.dart)
+    // — dùng chung với MainRenderer.drawCandle, không tự chép switch riêng.
+    final hollow = bodyStyle.isHollow(rising: rising);
 
     final paint = Paint()
       ..isAntiAlias = true

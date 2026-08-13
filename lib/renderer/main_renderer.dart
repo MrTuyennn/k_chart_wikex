@@ -26,6 +26,13 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
   final double mLineStrokeWidth = 1.0;
   double scaleX;
   late Paint mLinePaint;
+  /// Vẽ VIỀN thân nến rỗng (`CandleBodyStyle` khác `solid`) — Paint RIÊNG,
+  /// luôn giữ `PaintingStyle.stroke`, chỉ mutate `.color` mỗi nến. Trước đây
+  /// dùng chung `chartPaint` (mặc định fill, dùng cho mọi draw khác của
+  /// renderer này) rồi toggle style/strokeWidth sang stroke + reset lại sau
+  /// mỗi nến rỗng — tốn thêm 2 lần mutate Paint state/nến so với dùng Paint
+  /// riêng, không cần thiết.
+  late Paint _hollowBorderPaint;
   final VerticalTextAlignment verticalTextAlignment;
   final double mBottomPadding;
   final double externalScaleY;
@@ -64,6 +71,11 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
       ..style = PaintingStyle.stroke
       ..strokeWidth = mLineStrokeWidth
       ..color = chartColors.candleStyle.kLineColor;
+    _hollowBorderPaint = Paint()
+      ..isAntiAlias = true
+      ..filterQuality = FilterQuality.high
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = mCandleLineWidth;
     _contentRect = Rect.fromLTRB(
       chartRect.left,
       chartRect.top + _contentPadding,
@@ -330,7 +342,7 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
       _drawCandleBody(
         canvas,
         color: chartColors.candleStyle.upColor,
-        hollow: _isHollowCandle(rising: true),
+        hollow: chartColors.candleStyle.bodyStyle.isHollow(rising: true),
         bodyRect: Rect.fromLTRB(curX - r, close, curX + r, open),
         curX: curX,
         lineR: lineR,
@@ -345,28 +357,13 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
       _drawCandleBody(
         canvas,
         color: chartColors.candleStyle.dnColor,
-        hollow: _isHollowCandle(rising: false),
+        hollow: chartColors.candleStyle.bodyStyle.isHollow(rising: false),
         bodyRect: Rect.fromLTRB(curX - r, open, curX + r, close),
         curX: curX,
         lineR: lineR,
         high: high,
         low: low,
       );
-    }
-  }
-
-  /// [rising] = nến tăng (`close > open`, ứng với nhánh `upColor` ở trên —
-  /// "up" ở đây tính theo Y-pixel `open >= close` tức giá KHÔNG giảm).
-  bool _isHollowCandle({required bool rising}) {
-    switch (chartColors.candleStyle.bodyStyle) {
-      case CandleBodyStyle.solid:
-        return false;
-      case CandleBodyStyle.hollowUp:
-        return rising;
-      case CandleBodyStyle.hollowDown:
-        return !rising;
-      case CandleBodyStyle.hollow:
-        return true;
     }
   }
 
@@ -404,15 +401,10 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
           chartPaint,
         );
       }
-      chartPaint
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = mCandleLineWidth;
-      canvas.drawRect(bodyRect, chartPaint);
-      // reset — chartPaint dùng chung cho cả renderer (vd drawLine/trend
-      // line), không được để lại style/strokeWidth của nến trước đó.
-      chartPaint
-        ..style = PaintingStyle.fill
-        ..strokeWidth = 1.0;
+      // Paint RIÊNG (_hollowBorderPaint, luôn stroke) — không mutate
+      // chartPaint (dùng chung, mặc định fill cho mọi draw khác của
+      // renderer này) rồi phải reset lại sau mỗi nến rỗng.
+      canvas.drawRect(bodyRect, _hollowBorderPaint..color = color);
     } else {
       canvas.drawRect(
         Rect.fromLTRB(curX - lineR, high, curX + lineR, low),

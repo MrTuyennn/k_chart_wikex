@@ -29,6 +29,21 @@ enum CandleBodyStyle {
   hollow,
 }
 
+/// Nguồn sự thật DUY NHẤT cho "nến chiều [rising] có nên vẽ rỗng ruột theo
+/// style này không" — dùng chung bởi `MainRenderer.drawCandle` (chart thật)
+/// VÀ `CandleStyleIcon`/`CandleStylePreview` (icon/preview minh hoạ trong
+/// UI chọn style). Trước đây switch này bị chép tay lặp lại ở cả 3 chỗ
+/// (mỗi chỗ tự comment "phải đồng bộ với MainRenderer") — gộp về đây để
+/// sửa 1 lần, không có rủi ro 1 chỗ quên đồng bộ khi công thức đổi.
+extension CandleBodyStyleX on CandleBodyStyle {
+  bool isHollow({required bool rising}) => switch (this) {
+    CandleBodyStyle.solid => false,
+    CandleBodyStyle.hollowUp => rising,
+    CandleBodyStyle.hollowDown => !rising,
+    CandleBodyStyle.hollow => true,
+  };
+}
+
 /// Màu cho main chart (nến hoặc line chart — 2 cách vẽ khác nhau của cùng
 /// 1 chuỗi giá, `isLine` chọn cái nào). Tách khỏi `KChartColors` để dễ custom
 /// riêng, tương tự các `XxxStyle` của indicator.

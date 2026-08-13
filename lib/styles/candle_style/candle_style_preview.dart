@@ -193,12 +193,9 @@ class _CandleStylePreviewPainter extends CustomPainter {
       );
 
       final color = rising ? upColor : dnColor;
-      final hollow = switch (style) {
-        CandleBodyStyle.solid => false,
-        CandleBodyStyle.hollowUp => rising,
-        CandleBodyStyle.hollowDown => !rising,
-        CandleBodyStyle.hollow => true,
-      };
+      // Nguồn sự thật duy nhất: CandleBodyStyleX.isHollow (k_chart_style.dart)
+      // — dùng chung với MainRenderer.drawCandle, không tự chép switch riêng.
+      final hollow = style.isHollow(rising: rising);
 
       paint
         ..color = color
