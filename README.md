@@ -543,6 +543,13 @@ detailBuilder: (KLineEntity entity) {
 
 In short: zoom out and the axis collapses to dates; zoom in and it opens back up to `HH:mm` — automatically, per timeframe, without you tracking which timeframe is selected.
 
+**Within the `MM-dd HH:mm` tier, a midnight tick drops its time only when no other visible tick shares its day.** Day-boundary candles (local midnight) often win the collision-packing over their non-midnight neighbors, so several nearby ticks can legitimately land on `00:00`. Whether that reads as clutter depends on what's next to it:
+
+- `08-13 00:00` next to `08-13 12:00` (same day) → both keep their full time — the midnight tick needs it to stay distinct from its same-day neighbor.
+- `08-13 00:00`, `08-14 00:00`, `08-15 00:00` (consecutive days, nothing else on any of those days) → all three drop the redundant time, reading as `08-13`, `08-14`, `08-15`.
+
+Concretely: a midnight tick is trimmed when the *next* tick chronologically falls on a different calendar day (or there is no next tick). This can never cause two ticks to collide — midnight only happens once per calendar day, so two trimmed ticks are always two different dates.
+
 **Force 1 fixed format for both, regardless of zoom** — use a predefined format or build your own (`List<String>`, tokens from `lib/utils/date_format_util.dart`: `yyyy`, `yy`, `mm`, `dd`, `hour24Padded`, `nn`...) to override both defaults above:
 
 ```dart

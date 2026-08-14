@@ -147,6 +147,13 @@ const List<String> kAxisFormatMinute = [hour24Padded, ':', nn];
 const List<String> kAxisFormatHour = [mm, '-', dd, ' ', hour24Padded, ':', nn];
 const List<String> kAxisFormatDay = [yy, '-', mm, '-', dd];
 
+/// Biến thể RÚT GỌN của [kAxisFormatHour] — bỏ hẳn phần giờ:phút, dùng CHỈ
+/// khi 1 tick cụ thể rơi ĐÚNG nửa đêm local (`local.hour == 0 && local.
+/// minute == 0`) trong khi format đang hoạt động vẫn là tier "MM-dd HH:mm"
+/// (chưa đủ thưa để cả trục chuyển hẳn sang [kAxisFormatDay]). Xem
+/// [_labelFor] cho điều kiện áp dụng + lý do an toàn (không gây trùng nhãn).
+const List<String> kAxisFormatHourTrimmed = [mm, '-', dd];
+
 /// Chọn 1 trong 3 pattern trên cho nhãn trục X mặc định — kết hợp 3 ràng
 /// buộc ĐỘC LẬP, lấy tầng THÔ HƠN giữa các bên:
 ///
@@ -252,17 +259,130 @@ class TimeTick {
 /// đang hiển thị (viewport quá hẹp so với khoảng cách giữa 2 tick đã chọn).
 /// Giả định `tickWeight` đã được gán trước đó (vd sau khi [buildTimeTickPlan]
 /// chạy qua cùng danh sách nến chứa [candle]) — nếu chưa, coi như MINOR.
-String labelForCandle(KLineEntity candle, {List<String>? forcedFormat}) {
+///
+/// [allowMidnightTrim]: xem giải thích đầy đủ ở [_shouldTrimMidnight] —
+/// TUYỆT ĐỐI không suy từ nội dung `forcedFormat` (vd so `identical` với
+/// [kAxisFormatHour]), phải do NGƯỜI GỌI (biết chắc nguồn gốc format) truyền
+/// vào tường minh. Mặc định `false` (an toàn — không trim) cho ai gọi hàm
+/// này trực tiếp mà không cân nhắc; `BaseChartPainter._updateTimeTicks` là
+/// nơi DUY NHẤT được phép truyền `true`, và chỉ khi chắc chắn format đến từ
+/// chính [axisFormatFor] (không phải override của consumer).
+String labelForCandle(
+  KLineEntity candle, {
+  List<String>? forcedFormat,
+  bool allowMidnightTrim = false,
+}) {
   final local = DateTime.fromMillisecondsSinceEpoch(candle.time ?? 0);
-  return _labelFor(local, candle.tickWeight ?? kMinor, forcedFormat);
+  return _labelFor(local, candle.tickWeight ?? kMinor, forcedFormat, allowMidnightTrim);
 }
 
-String _labelFor(DateTime local, int weight, List<String>? forcedFormat) {
-  if (forcedFormat != null) return dateFormat(local, forcedFormat);
+/// [_labelFor] dùng cho 1 tick ĐƠN LẺ, không có tick nào khác để so — chỉ
+/// dùng cho Fallback B ([labelForCandle]). Với trim nửa đêm ở
+/// [kAxisFormatHour], vì không biết tick kế tiếp (nếu có) có cùng ngày hay
+/// không, cứ trim khi rơi đúng nửa đêm — hợp lý vì đây là tick DUY NHẤT đang
+/// hiển thị, không có tick nào khác cùng ngày để cần phân biệt.
+String _labelFor(
+  DateTime local,
+  int weight,
+  List<String>? forcedFormat,
+  bool allowMidnightTrim,
+) {
+  if (forcedFormat != null) {
+    if (_shouldTrimMidnight(forcedFormat, local, allowMidnightTrim)) {
+      return dateFormat(local, kAxisFormatHourTrimmed);
+    }
+    return dateFormat(local, forcedFormat);
+  }
+  return _weightEscalatedLabel(local, weight);
+}
+
+/// Quyết định có trim giờ:phút cho 1 tick nửa đêm hay không.
+///
+/// **[allowMidnightTrim] là NGUỒN SỰ THẬT DUY NHẤT — không được suy ra từ
+/// `identical(forcedFormat, kAxisFormatHour)`.** Từng dùng `identical()` làm
+/// tín hiệu "format này là do lib tự chọn, an toàn để trim" — SAI, vì
+/// [kAxisFormatHour] là const PUBLIC (export qua `utils/index.dart` →
+/// `k_chart_plus.dart`): consumer hoàn toàn có thể tự import rồi truyền
+/// thẳng `timeFormat: kAxisFormatHour` để ÉP CỐ ĐỊNH "luôn hiện đủ giờ:phút,
+/// bất kể zoom" (đúng cam kết "Force ... regardless of zoom" trong README)
+/// — khi đó `forcedFormat` VẪN `identical` với [kAxisFormatHour] (cùng
+/// object reference), nên logic cũ vẫn tự ý trim, ÂM THẦM phá cam kết
+/// "force" của chính consumer. Phát hiện qua `/code-review`, xác nhận bằng
+/// cách gọi trực tiếp `buildTimeTickPlan(forcedFormat: kAxisFormatHour,...)`
+/// — nến nửa đêm bị trim dù đã "force" tường minh.
+///
+/// Sửa: CHỈ nơi gọi (`BaseChartPainter._updateTimeTicks`, nơi DUY NHẤT biết
+/// chắc format có phải do [axisFormatFor] tự chọn hay do `chartStyle.
+/// dateTimeFormat` của consumer) mới được quyết định `allowMidnightTrim` —
+/// `chartStyle.dateTimeFormat == null` (không custom) mới truyền `true`.
+bool _shouldTrimMidnight(
+  List<String> forcedFormat,
+  DateTime local,
+  bool allowMidnightTrim,
+) =>
+    allowMidnightTrim &&
+    identical(forcedFormat, kAxisFormatHour) &&
+    local.hour == 0 &&
+    local.minute == 0;
+
+String _weightEscalatedLabel(DateTime local, int weight) {
   if (weight >= kYear) return dateFormat(local, const [yyyy]);
   if (weight >= kMonth) return dateFormat(local, const [M]);
   if (weight >= kDay) return dateFormat(local, const [d]);
   return dateFormat(local, const [hour24Padded, ':', nn]);
+}
+
+/// Gán label cho TOÀN BỘ [accepted] (đã sort theo `absX`) — khác [_labelFor]
+/// ở chỗ CÓ xét tick KẾ TIẾP trong cùng danh sách để quyết định có trim
+/// nửa đêm hay không:
+///
+/// - Nếu tick kế tiếp rơi CÙNG NGÀY lịch (vd `08-13 00:00` rồi `08-13
+///   12:00`) — GIỮ NGUYÊN đầy đủ "MM-dd HH:mm" cho tick nửa đêm, vì trong
+///   ngày đó còn tick khác cần giờ:phút để phân biệt; trim riêng 1 mình tick
+///   nửa đêm trong khi tick kế bên vẫn đủ giờ:phút sẽ trông LỆCH KIỂU (1 có
+///   giờ, 1 không) dù cùng 1 ngày.
+/// - Nếu tick kế tiếp đã sang NGÀY KHÁC (hoặc không còn tick nào sau) — vd
+///   `08-13 00:00`, `08-14 00:00`, `08-15 00:00` — trim CẢ CHUỖI, vì không
+///   tick nào trong đó có "hàng xóm cùng ngày" cần phân biệt bằng giờ:phút.
+///
+/// Nửa đêm chỉ xảy ra ĐÚNG 1 lần/ngày nên tick kế tiếp KHÔNG BAO GIỜ có thể
+/// vừa cùng ngày vừa cũng là nửa đêm (2 tick khác nhau cùng ngày thì tối đa
+/// 1 trong 2 là nửa đêm) — điều kiện "cùng ngày" ở trên luôn ứng với đúng 1
+/// cặp (nửa đêm, giờ khác) chứ không bao giờ (nửa đêm, nửa đêm) trùng.
+List<TimeTick> _labelAccepted(
+  List<_Candidate> accepted,
+  List<KLineEntity> candles,
+  List<String>? forcedFormat,
+  bool allowMidnightTrim,
+) {
+  final locals = List<DateTime>.generate(
+    accepted.length,
+    (i) => DateTime.fromMillisecondsSinceEpoch(
+      candles[accepted[i].index].time ?? 0,
+    ),
+  );
+
+  return List<TimeTick>.generate(accepted.length, (i) {
+    final c = accepted[i];
+    final local = locals[i];
+    String label;
+    if (forcedFormat != null) {
+      final bool nextIsSameDay =
+          i + 1 < locals.length &&
+          locals[i + 1].year == local.year &&
+          locals[i + 1].month == local.month &&
+          locals[i + 1].day == local.day;
+      if (!nextIsSameDay &&
+          _shouldTrimMidnight(forcedFormat, local, allowMidnightTrim)) {
+        label = dateFormat(local, kAxisFormatHourTrimmed);
+      } else {
+        label = dateFormat(local, forcedFormat);
+      }
+    } else {
+      label = _weightEscalatedLabel(local, c.weight);
+    }
+    return TimeTick(index: c.index, weight: c.weight, label: label);
+  });
 }
 
 class _Candidate {
@@ -294,6 +414,7 @@ List<TimeTick> buildTimeTickPlan({
   List<String>? forcedFormat,
   double viewportWidth = 0,
   int minVisibleTicks = kMinVisibleAxisTicks,
+  bool allowMidnightTrim = false,
 }) {
   if (candles.isEmpty || barSpacing <= 0) return const [];
   _assignTickWeights(candles);
@@ -364,19 +485,7 @@ List<TimeTick> buildTimeTickPlan({
     );
   }
 
-  return accepted
-      .map(
-        (c) => TimeTick(
-          index: c.index,
-          weight: c.weight,
-          label: _labelFor(
-            DateTime.fromMillisecondsSinceEpoch(candles[c.index].time ?? 0),
-            c.weight,
-            forcedFormat,
-          ),
-        ),
-      )
-      .toList();
+  return _labelAccepted(accepted, candles, forcedFormat, allowMidnightTrim);
 }
 
 /// Lấp các đoạn TRỐNG quá rộng trong [accepted] (đã sort theo `absX`, sau
@@ -490,7 +599,7 @@ void _fillDensityGaps({
 /// với sai số nhỏ cỡ này).
 class TimeTickPlanner {
   List<TimeTick>? _cachedPlan;
-  (int, int, int, int, String, int, int)? _cachedKey;
+  (int, int, int, int, String, int, int, bool)? _cachedKey;
 
   List<TimeTick> getOrBuild({
     required List<KLineEntity> candles,
@@ -499,6 +608,7 @@ class TimeTickPlanner {
     List<String>? forcedFormat,
     double viewportWidth = 0,
     int minVisibleTicks = kMinVisibleAxisTicks,
+    bool allowMidnightTrim = false,
   }) {
     final key = (
       identityHashCode(candles),
@@ -511,6 +621,7 @@ class TimeTickPlanner {
       // và tránh cache-miss vì sai số dưới-px không ảnh hưởng kết quả chọn.
       viewportWidth.round(),
       minVisibleTicks,
+      allowMidnightTrim,
     );
     if (key == _cachedKey && _cachedPlan != null) {
       return _cachedPlan!;
@@ -522,6 +633,7 @@ class TimeTickPlanner {
       forcedFormat: forcedFormat,
       viewportWidth: viewportWidth,
       minVisibleTicks: minVisibleTicks,
+      allowMidnightTrim: allowMidnightTrim,
     );
     _cachedKey = key;
     _cachedPlan = plan;

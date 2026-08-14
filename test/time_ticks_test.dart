@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:k_chart_jk/entity/k_line_entity.dart';
 import 'package:k_chart_jk/utils/time_ticks.dart';
+import 'package:k_chart_jk/utils/date_format_util.dart';
 
 List<KLineEntity> _syntheticCandles({
   required int count,
@@ -439,6 +440,163 @@ void main() {
       final boundaryIntervalMs = (24 * 60 * 60 * 1000 * barSpacing / kMinGapX).round();
       expect(axisFormatFor(barSpacing, boundaryIntervalMs), isNot(kAxisFormatDay));
       expect(axisFormatFor(barSpacing, boundaryIntervalMs + 1), kAxisFormatDay);
+    });
+  });
+
+  // Tick text trimming — user request: at the "MM-dd HH:mm" tier, many
+  // adjacent ticks land exactly on local midnight (day-boundary candles win
+  // kMinGapX packing over nearby non-boundary candles), so the axis reads
+  // like a repeated wall of "00:00" even though each has a distinct date.
+  // Refined per user's follow-up with 2 concrete examples:
+  //   - "08-13 00:00" next to "08-13 12:00" (SAME calendar day) -> KEEP both
+  //     full, the midnight tick needs its time to distinguish it from its
+  //     same-day sibling.
+  //   - "08-13 00:00, 08-14 00:00, 08-15 00:00" (consecutive DIFFERENT days,
+  //     no same-day sibling for any of them) -> TRIM all three to date-only.
+  // The rule: trim a midnight tick only when the NEXT tick (chronologically)
+  // is on a different calendar day (or there is no next tick).
+  group('_labelFor — midnight trimming on kAxisFormatHour', () {
+    test('same-day pair (00:00 + 12:00) — neither gets trimmed', () {
+      const intervalMs = 4 * 3600000; // 4h
+      const barSpacing = 60.0; // this zoom keeps both the 00:00 and 12:00 candidate per day
+      final candles = _syntheticCandles(
+        count: 4000,
+        intervalMs: intervalMs,
+        startTime: DateTime(2024, 1, 1).millisecondsSinceEpoch,
+      );
+      final format = axisFormatFor(barSpacing, intervalMs);
+      expect(format, kAxisFormatHour);
+      final plan = buildTimeTickPlan(
+        candles: candles,
+        barSpacing: barSpacing,
+        intervalMs: intervalMs,
+        forcedFormat: format,
+        viewportWidth: 400,
+        minVisibleTicks: kMinVisibleAxisTicks,
+        // Mô phỏng đúng cách BaseChartPainter._updateTimeTicks gọi khi
+        // KHÔNG có `chartStyle.dateTimeFormat` — chỉ khi đó mới bật trim.
+        allowMidnightTrim: true,
+      );
+      final labels = plan.map((t) => t.label).take(6).toList();
+      expect(
+        labels,
+        ['01-01 00:00', '01-01 12:00', '01-02 00:00', '01-02 12:00', '01-03 00:00', '01-03 12:00'],
+        reason: 'the 00:00 tick has a same-day 12:00 sibling, so it must keep its time',
+      );
+    });
+
+    test('consecutive different-day midnights — all get trimmed to date-only', () {
+      const intervalMs = 4 * 3600000; // 4h
+      const barSpacing = 20.0; // this zoom keeps only 1 candidate/day (no same-day sibling)
+      final candles = _syntheticCandles(
+        count: 4000,
+        intervalMs: intervalMs,
+        startTime: DateTime(2024, 1, 1).millisecondsSinceEpoch,
+      );
+      final format = axisFormatFor(barSpacing, intervalMs);
+      expect(format, kAxisFormatHour);
+      final plan = buildTimeTickPlan(
+        candles: candles,
+        barSpacing: barSpacing,
+        intervalMs: intervalMs,
+        forcedFormat: format,
+        viewportWidth: 400,
+        minVisibleTicks: kMinVisibleAxisTicks,
+        allowMidnightTrim: true,
+      );
+      final labels = plan.map((t) => t.label).take(5).toList();
+      expect(
+        labels,
+        ['01-01', '01-02', '01-03', '01-04', '01-05'],
+        reason: 'no tick has a same-day sibling, so all midnight ticks drop the redundant time',
+      );
+    });
+
+    // Bug từ /code-review: consumer TỰ IMPORT rồi truyền lại đúng
+    // kAxisFormatHour (const public, export qua k_chart_plus.dart) để CHỦ Ý
+    // ép hiện đủ giờ:phút ("force ... regardless of zoom" — README) — trước
+    // đây `identical(forcedFormat, kAxisFormatHour)` không phân biệt được
+    // với trường hợp lib tự chọn, nên vẫn bị trim ngầm. `allowMidnightTrim`
+    // mặc định `false` khi không truyền — đúng hành vi "force" của consumer.
+    test('allowMidnightTrim defaults to false — consumer forcing kAxisFormatHour is never trimmed', () {
+      const intervalMs = 4 * 3600000;
+      const barSpacing = 20.0; // isolated-midnight scenario — WOULD trim if allowMidnightTrim leaked in
+      final candles = _syntheticCandles(
+        count: 4000,
+        intervalMs: intervalMs,
+        startTime: DateTime(2024, 1, 1).millisecondsSinceEpoch,
+      );
+      final plan = buildTimeTickPlan(
+        candles: candles,
+        barSpacing: barSpacing,
+        intervalMs: intervalMs,
+        forcedFormat: kAxisFormatHour, // consumer's own explicit "force" choice
+        viewportWidth: 400,
+        minVisibleTicks: kMinVisibleAxisTicks,
+        // allowMidnightTrim omitted -> defaults to false
+      );
+      final labels = plan.map((t) => t.label).take(5).toList();
+      expect(
+        labels,
+        ['01-01 00:00', '01-02 00:00', '01-03 00:00', '01-04 00:00', '01-05 00:00'],
+        reason: 'consumer explicitly forced this format — must never be silently trimmed',
+      );
+    });
+
+    test('trimming never produces 2 adjacent identical labels', () {
+      const intervalMs = 4 * 3600000;
+      final candles = _syntheticCandles(
+        count: 4000,
+        intervalMs: intervalMs,
+        startTime: DateTime(2024, 1, 1).millisecondsSinceEpoch,
+      );
+      for (final barSpacing in [15.0, 20.0, 30.0, 44.0, 60.0]) {
+        final format = axisFormatFor(barSpacing, intervalMs);
+        final plan = buildTimeTickPlan(
+          candles: candles,
+          barSpacing: barSpacing,
+          intervalMs: intervalMs,
+          forcedFormat: format,
+          viewportWidth: 400,
+          minVisibleTicks: kMinVisibleAxisTicks,
+          allowMidnightTrim: true,
+        );
+        for (int i = 1; i < plan.length; i++) {
+          expect(
+            plan[i].label == plan[i - 1].label,
+            isFalse,
+            reason:
+                'barSpacing=$barSpacing: ticks ${plan[i - 1].index}/${plan[i].index} '
+                'both show "${plan[i].label}"',
+          );
+        }
+      }
+    });
+
+    test('a format with the same tokens but a different list instance is never trimmed either — even with allowMidnightTrim: true', () {
+      const intervalMs = 4 * 3600000;
+      const barSpacing = 60.0;
+      final candles = _syntheticCandles(
+        count: 4000,
+        intervalMs: intervalMs,
+        startTime: DateTime(2024, 1, 1).millisecondsSinceEpoch,
+      );
+      final plan = buildTimeTickPlan(
+        candles: candles,
+        barSpacing: barSpacing,
+        intervalMs: intervalMs,
+        // Cùng token với kAxisFormatHour nhưng KHÔNG phải cùng list instance
+        // (không `const`, không import từ time_ticks.dart) — dù có bật
+        // allowMidnightTrim: true, `identical()` vẫn phải trả false nên
+        // KHÔNG trim — lớp bảo vệ thứ 2 (song song với allowMidnightTrim ở
+        // test trên), phòng trường hợp gọi hàm sai chỗ mà vẫn bật cờ.
+        forcedFormat: [mm, '-', dd, ' ', hour24Padded, ':', nn],
+        viewportWidth: 400,
+        minVisibleTicks: kMinVisibleAxisTicks,
+        allowMidnightTrim: true,
+      );
+      final labels = plan.map((t) => t.label).toList();
+      expect(labels.where((l) => l.endsWith(' 00:00')), isNotEmpty);
     });
   });
 }

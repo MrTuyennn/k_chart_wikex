@@ -479,6 +479,16 @@ abstract class BaseChartPainter extends CustomPainter {
     // TimeTickPlanner) không đổi — chỉ đổi phần CHỮ hiển thị, không quay lại
     // cơ chế mGridColumns chia đều cột cũ.
     final List<String> effectiveFormat = _axisFormatFor(barSpacing, intervalMs);
+    // Chỉ cho phép trim "00:00" thừa (xem `_shouldTrimMidnight` trong
+    // time_ticks.dart) khi `effectiveFormat` THẬT SỰ do lib tự chọn
+    // (`axisFormatFor`) — KHÔNG được suy từ so sánh nội dung/identity của
+    // chính `effectiveFormat` (`kAxisFormatHour` là const PUBLIC, consumer
+    // có thể tự import rồi truyền y hệt qua `timeFormat` để CHỦ Ý ép hiện đủ
+    // giờ:phút — lúc đó KHÔNG được tự ý trim, phá đúng cam kết "force"). Đây
+    // là nơi DUY NHẤT biết chắc nguồn gốc: `chartStyle.dateTimeFormat ==
+    // null` nghĩa là consumer không custom, `effectiveFormat` chắc chắn đến
+    // từ `axisFormatFor`.
+    final bool allowMidnightTrim = chartStyle.dateTimeFormat == null;
     // `viewportWidth: mPlotWidth` + `minVisibleTicks` (mặc định
     // `kMinVisibleAxisTicks = 5`) — đảm bảo ÍT NHẤT ngần đó tick lọt trong
     // khung nhìn hiện tại, không chỉ "không trống" như Fallback B bên dưới.
@@ -493,6 +503,7 @@ abstract class BaseChartPainter extends CustomPainter {
       forcedFormat: effectiveFormat,
       viewportWidth: mPlotWidth,
       minVisibleTicks: kMinVisibleAxisTicks,
+      allowMidnightTrim: allowMidnightTrim,
     );
 
     final ticks = <({int index, double x, String label})>[];
@@ -513,7 +524,11 @@ abstract class BaseChartPainter extends CustomPainter {
       ticks.add((
         index: mid,
         x: translateXtoX(getX(mid)),
-        label: labelForCandle(datas![mid], forcedFormat: effectiveFormat),
+        label: labelForCandle(
+          datas![mid],
+          forcedFormat: effectiveFormat,
+          allowMidnightTrim: allowMidnightTrim,
+        ),
       ));
     }
 
