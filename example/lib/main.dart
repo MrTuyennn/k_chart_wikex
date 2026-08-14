@@ -843,11 +843,10 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
       showNowPrice: true,
       showInfoDialog: true,
       mBaseHeight: 280,
-      // Ép format nhãn trục theo ĐÚNG khung thời gian đang chọn (yêu cầu
-      // riêng, khác thuật toán thích ứng theo weight của CHART_AXES.md
-      // §5.3) — xem `ChartTimeframe.axisTimeFormat`. Thuật toán CHỌN
-      // TICK/vị trí (weight-ladder) không đổi, chỉ đổi CHỮ hiển thị.
-      timeFormat: state.timeframe.axisTimeFormat,
+      // `timeFormat` để mặc định (null) — lib tự suy format cố định đúng
+      // khung thời gian đang chọn từ khoảng cách data (xem
+      // `BaseChartPainter.initFormats`), không cần tự tính ở tầng app nữa
+      // (trước đây làm qua `ChartTimeframe.axisTimeFormat`, đã bỏ).
       onLoadMore: (isLeft) =>
           context.read<ChartBloc>().add(ChartMoreDataRequested(isLeft)),
       isLoadingMore: state.isFetching,

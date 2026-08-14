@@ -48,9 +48,13 @@ class KChartWidget extends StatefulWidget {
   final bool materialInfoDialog; // Material Style Information Popup
 
   /// Ép format nhãn trục thời gian + crosshair, dùng cho MỌI tick bất kể
-  /// weight (bỏ qua thuật toán thích ứng ở CHART_AXES.md §5.3). `null`
-  /// (mặc định) = giữ nguyên hành vi thích ứng — format tự đổi theo mức zoom.
-  /// Tương đương set [KChartStyle.dateTimeFormat]; nếu cả hai đều được set,
+  /// weight (bỏ qua thuật toán CHỌN vị trí tick vẫn theo weight-ladder ở
+  /// CHART_AXES.md §5, chỉ đổi phần CHỮ hiển thị). `null` (mặc định) = lib tự
+  /// suy format cố định từ khoảng cách 2 nến đầu — khung phút → `HH:mm`,
+  /// khung giờ → `MM-dd HH:mm`, khung ngày → `yy-MM-dd` (xem
+  /// `BaseChartPainter.initFormats`). Chỉ cần set field này khi muốn override
+  /// default đó (vd format khác theo locale). Tương đương set
+  /// [KChartStyle.dateTimeFormat]; nếu cả hai đều được set,
   /// [KChartStyle.dateTimeFormat] thắng (xem `_effectiveChartStyle`).
   final List<String>? timeFormat;
   final double mBaseHeight;

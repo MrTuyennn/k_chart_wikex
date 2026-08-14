@@ -95,7 +95,7 @@ KChartWidget(
   showNowPrice: true,
   showInfoDialog: true,
   mBaseHeight: 300,
-  // timeFormat: omitted → adaptive time labels (recommended default, see "Time format" below)
+  // timeFormat: omitted → format auto-derived from candle interval (recommended default, see "Time format" below)
   onLoadMore: (isLeft) {
     // load more data when user scrolls to the edge
   },
@@ -181,7 +181,7 @@ DataUtil.calculateAll(data, mainIndicators, secondaryIndicators);
 | `showInfoDialog`        | `bool`                     | `true`                    | Show info on long-press/tap         |
 | `isTapShowInfoDialog`   | `bool`                     | `false`                   | Single tap shows crosshair + dialog |
 | `materialInfoDialog`    | `bool`                     | `true`                    | Material vs Cupertino dialog style  |
-| `timeFormat`            | `List<String>?`            | `null`                    | Force 1 fixed format for every X-axis tick. `null` (default) = adaptive: format escalates with each tick's calendar weight (year → month → day → `HH:mm`) — see [Time format](#time-format) |
+| `timeFormat`            | `List<String>?`            | `null`                    | Force 1 fixed format for every X-axis tick. `null` (default) = format auto-derived from the candle interval (minute → `HH:mm`, hour → `MM-dd HH:mm`, day → `yy-MM-dd`) — see [Time format](#time-format) |
 | `fixedLength`           | `int`                      | `2`                       | Decimal places for price labels     |
 | `verticalTextAlignment` | `VerticalTextAlignment`    | `right`                   | Price label side (`left`/`right`)   |
 | `hideGrid`              | `bool`                     | `false`                   | Hide grid lines                     |
@@ -527,9 +527,15 @@ detailBuilder: (KLineEntity entity) {
 
 ## Time format
 
-**Default (`timeFormat: null` — recommended):** adaptive. Which candles get a tick, and where, is decided by a weight-ladder algorithm (each candle scored by whether it lands on a calendar boundary — start of hour/day/month/year in local time); the label TEXT on each tick then escalates with that tick's weight — a year-boundary tick shows `"2026"`, a month-boundary tick shows `"Aug"`, a day-boundary tick shows `"10"`, everything else shows `"09:05"`. This keeps the X axis readable across every zoom level without you specifying anything.
+**Default (`timeFormat: null` — recommended):** the package picks a fixed format for you from the actual gap between your candles (checked once from the first two entries in `datas`) and applies it to every tick + the crosshair label:
 
-**Force 1 fixed format for every tick** — use a predefined format or build your own (`List<String>`, tokens from `lib/utils/date_format_util.dart`: `yyyy`, `yy`, `mm`, `dd`, `hour24Padded`, `nn`...):
+- gap < 1 hour (e.g. 1m/5m/15m/30m candles) → `HH:mm`
+- gap < 1 day (e.g. 1H/4H candles) → `MM-dd HH:mm`
+- gap ≥ 1 day (e.g. 1D candles) → `yy-MM-dd`
+
+You don't need to compute this yourself from whatever timeframe enum your app uses — just leave `timeFormat` unset and switch `datas` to a different candle interval; the label format follows automatically.
+
+**Force 1 fixed format for every tick** — use a predefined format or build your own (`List<String>`, tokens from `lib/utils/date_format_util.dart`: `yyyy`, `yy`, `mm`, `dd`, `hour24Padded`, `nn`...) to override the default above:
 
 ```dart
 // 2024-01-15
@@ -542,7 +548,35 @@ timeFormat: TimeFormat.yearMonthDayWithHour
 timeFormat: const [yyyy, '/', mm, '/', dd]
 ```
 
-Forcing a format only changes the TEXT on each tick — tick *selection* (which candles get a label, spacing, pan/zoom stability) is unaffected either way.
+### Migrating off a hand-rolled per-timeframe format
+
+If your app previously mapped its own timeframe (1m/5m/15m/.../1D) to a `List<String>` and passed it in on every rebuild, that logic is now redundant — the package derives the same result from the candle data itself.
+
+```dart
+// Before
+List<String> get axisTimeFormat {
+  if (interval < const Duration(hours: 1)) return const [hour24Padded, ':', nn];
+  if (interval < const Duration(days: 1)) {
+    return const [mm, '-', dd, ' ', hour24Padded, ':', nn];
+  }
+  return const [yy, '-', mm, '-', dd];
+}
+// ...
+KChartWidget(
+  // ...
+  timeFormat: state.timeframe.axisTimeFormat,
+)
+
+// After — just delete the getter and the parameter
+KChartWidget(
+  // ...
+  // timeFormat: omitted, the package figures it out from `datas`
+)
+```
+
+Keep `timeFormat` around only if you actually want something the built-in 3-tier default doesn't produce (a different locale, a monthly rollup, always-show-year, etc.).
+
+Either way, tick *selection* (which candles get a label, spacing, pan/zoom stability) always follows the same weight-ladder algorithm — `timeFormat`/`dateTimeFormat` only changes the TEXT on each tick.
 
 ---
 

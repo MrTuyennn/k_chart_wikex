@@ -77,21 +77,9 @@ enum ChartTimeframe {
   /// Field `period` trong payload WS kline — dùng lọc frame theo khung.
   final String wsPeriod;
 
-  /// Format nhãn trục thời gian theo ĐÚNG khung đang chọn (không suy từ
-  /// khoảng cách data như `mFormats`/`initFormats()` cũ) — truyền thẳng vào
-  /// `KChartWidget.timeFormat`:
-  ///  - khung phút (1m/5m/15m/30m) → `HH:mm`
-  ///  - khung giờ (1H/4H)          → `MM-dd HH:mm`
-  ///  - khung ngày (1D)            → `yy-MM-dd`
-  List<String> get axisTimeFormat {
-    if (interval < const Duration(hours: 1)) {
-      return const [hour24Padded, ':', nn];
-    }
-    if (interval < const Duration(days: 1)) {
-      return const [mm, '-', dd, ' ', hour24Padded, ':', nn];
-    }
-    return const [yy, '-', mm, '-', dd];
-  }
+  // Format nhãn trục thời gian giờ do lib tự suy từ khoảng cách data (xem
+  // `BaseChartPainter.initFormats`) — không cần tính tay ở đây rồi truyền
+  // qua `KChartWidget.timeFormat` nữa (đã bỏ getter `axisTimeFormat`).
 }
 
 /// Toàn bộ data/business state của demo chart. View chỉ đọc field/getter ở

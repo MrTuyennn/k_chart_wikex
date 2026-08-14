@@ -203,6 +203,17 @@ abstract class BaseChartPainter extends CustomPainter {
   }
 
   /// init format time
+  ///
+  /// `chartStyle.dateTimeFormat` (tương đương `KChartWidget.timeFormat`) luôn
+  /// thắng nếu consumer tự set — đây chỉ là DEFAULT khi họ không custom.
+  /// Default suy trực tiếp từ khoảng cách 2 nến đầu (tức khung thời gian thật
+  /// của data), KHÔNG phải khoảng cách hiển thị trên màn hình:
+  ///  - khung phút (< 1h)  → `HH:mm`
+  ///  - khung giờ (< 1d)   → `MM-dd HH:mm`
+  ///  - khung ngày (>= 1d) → `yy-MM-dd`
+  /// Từng phải tính tay ở tầng app (vd `ChartTimeframe.axisTimeFormat` truyền
+  /// qua `timeFormat`) — chuyển hẳn vào lib để mọi consumer có sẵn hành vi
+  /// đúng mà không phải tự suy diễn lại từ enum timeframe của riêng họ.
   void initFormats() {
     if (mItemCount < 2) {
       mFormats =
@@ -211,24 +222,23 @@ abstract class BaseChartPainter extends CustomPainter {
       return;
     }
 
-    int firstTime = datas!.first.time ?? 0;
-    int secondTime = datas![1].time ?? 0;
-    int time = (secondTime - firstTime) ~/ 1000;
+    final int firstTime = datas!.first.time ?? 0;
+    final int secondTime = datas![1].time ?? 0;
+    final int time = (secondTime - firstTime) ~/ 1000; // seconds
 
     if (time >= 24 * 60 * 60) {
-      // daily or monthly line
-      mFormats =
-          chartStyle.dateTimeFormat ??
-          (time >= 24 * 60 * 60 * 28 ? [yy, '-', mm] : [yy, '-', mm, '-', dd]);
-    } else {
-      // hour/minute line
+      mFormats = chartStyle.dateTimeFormat ?? [yy, '-', mm, '-', dd];
+    } else if (time >= 60 * 60) {
       mFormats =
           chartStyle.dateTimeFormat ??
           [mm, '-', dd, ' ', hour24Padded, ':', nn];
+    } else {
+      mFormats = chartStyle.dateTimeFormat ?? [hour24Padded, ':', nn];
     }
     // mGridColumns không còn quyết định số lượng/label trục thời gian nữa —
     // xem [_updateTimeTicks]/`TimeTickPlanner` (CHART_AXES.md §5). `mFormats`
-    // ở đây chỉ còn phục vụ label crosshair (`getDate` trong `ChartPainter`).
+    // ở đây phục vụ CẢ label crosshair (`getDate` trong `ChartPainter`) LẪN
+    // label trục X mặc định (`effectiveFormat` trong `_updateTimeTicks`).
   }
 
   /// paint chart

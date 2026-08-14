@@ -6,6 +6,17 @@ Tổ chức theo **ngày** (mới nhất ở trên). Với các mốc đã đón
 
 ---
 
+## 2026-08-14
+
+- **feat:** `timeFormat`/`KChartStyle.dateTimeFormat` mặc định (`null`, không custom) giờ tự suy đúng format cố định theo khung thời gian thật của data, thay vì phải tự tính ở tầng app rồi truyền vào — chuyển hẳn thuật toán này (trước đây sống ở `example/lib/bloc/chart_state.dart` dưới tên `ChartTimeframe.axisTimeFormat`, truyền qua `KChartWidget.timeFormat`) vào `BaseChartPainter.initFormats()`:
+  - gap giữa 2 nến đầu `< 1h` (1m/5m/15m/30m) → `HH:mm`
+  - gap `< 1d` (1H/4H) → `MM-dd HH:mm`
+  - gap `>= 1d` (1D) → `yy-MM-dd`
+  - (bỏ luôn nhánh phụ "monthly line" `time >= 28 ngày → yy-mm` của `initFormats()` cũ — không có trong công thức 3 bậc trên, và không cần thiết vì hầu hết consumer set `timeFormat` khi cần format tháng riêng.)
+  - `timeFormat`/`chartStyle.dateTimeFormat` do consumer set vẫn override toàn bộ như cũ — không đổi hành vi khi đã custom, chỉ đổi DEFAULT khi không custom.
+  - Tiện thể sửa luôn 1 chỗ tài liệu sai từ trước: README từng mô tả default là "adaptive, format escalate theo tickWeight (năm/tháng/ngày/`HH:mm`)" — nhưng `mFormats` (field cấp `effectiveFormat` cho `_updateTimeTicks`) trước giờ luôn có giá trị non-null nên nhánh "adaptive theo weight" (`_labelFor` khi `forcedFormat == null`) thực ra chưa bao giờ chạy tới được; default thật sự luôn là 1 format CỐ ĐỊNH (trước đây suy 2 bậc, giờ suy 3 bậc). Đã sửa mục "Time format" + bảng props trong README cho khớp thực tế.
+  - File: `lib/renderer/base_chart_painter.dart`, `lib/k_chart_widget.dart` (doc comment `timeFormat`), `example/lib/main.dart`, `example/lib/bloc/chart_state.dart` (bỏ `ChartTimeframe.axisTimeFormat`, không còn cần), `README.md`.
+
 ## 2026-08-12
 
 - **fix (từ `/code-review` — 5 finding, đều đã verify độc lập bằng cách đọc lại code trước khi sửa):**
