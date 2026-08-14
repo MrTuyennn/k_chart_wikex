@@ -32,7 +32,21 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
   /// renderer này) rồi toggle style/strokeWidth sang stroke + reset lại sau
   /// mỗi nến rỗng — tốn thêm 2 lần mutate Paint state/nến so với dùng Paint
   /// riêng, không cần thiết.
-  late Paint _hollowBorderPaint;
+  ///
+  /// LAZY (nullable, không tạo trong constructor) — `MainRenderer` được
+  /// dựng lại MỖI FRAME (`ChartPainter.initChartRenderer`), nên tạo `Paint()`
+  /// vô điều kiện ở đây tốn 1 allocation/frame kể cả khi `bodyStyle` đang là
+  /// `solid` (mặc định — style hollow không hề dùng paint này). Chỉ cấp phát
+  /// lần đầu thực sự vẽ 1 nến hollow.
+  Paint? _hollowBorderPaint;
+
+  /// Path tái dùng cho 2 đoạn râu nhô ra ngoài thân khi nến hollow — gộp
+  /// thành 1 `canvas.drawPath` thay vì 2 `canvas.drawRect` riêng (giảm số
+  /// draw call/nến từ 3 xuống 2, ngang bằng nến solid — chi phí vượt biên
+  /// sang canvas/Skia của mỗi lệnh vẽ thường đáng kể hơn hình học đơn giản
+  /// như 1 rect). Field cấp 1 lần/frame, `reset()` + `addRect` lại cho từng
+  /// nến hollow thay vì tạo `Path()` mới mỗi nến.
+  final Path _hollowWickPath = Path();
   final VerticalTextAlignment verticalTextAlignment;
   final double mBottomPadding;
   final double externalScaleY;
@@ -71,11 +85,6 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
       ..style = PaintingStyle.stroke
       ..strokeWidth = mLineStrokeWidth
       ..color = chartColors.candleStyle.kLineColor;
-    _hollowBorderPaint = Paint()
-      ..isAntiAlias = true
-      ..filterQuality = FilterQuality.high
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = mCandleLineWidth;
     _contentRect = Rect.fromLTRB(
       chartRect.left,
       chartRect.top + _contentPadding,
@@ -372,7 +381,10 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
   ///
   /// Khi [hollow]: bấc CHỈ vẽ 2 đoạn râu thò ra ngoài thân (`high` ->
   /// `bodyRect.top` và `bodyRect.bottom` -> `low`) — KHÔNG vẽ đoạn cắt ngang
-  /// ruột thân, để thân thực sự rỗng (không có gạch xuyên giữa).
+  /// ruột thân, để thân thực sự rỗng (không có gạch xuyên giữa). 2 đoạn râu
+  /// gộp vào 1 `_hollowWickPath` rồi vẽ bằng 1 `drawPath` (thay vì 2
+  /// `drawRect` riêng) — tổng draw call/nến hollow còn 2 (bấc + viền thân),
+  /// ngang bằng nến solid, thay vì 3 như trước.
   /// Khi solid: giữ nguyên 1 đoạn bấc liền `high` -> `low` như trước (không
   /// đổi hành vi cũ — thân tô đặc đã che hết phần bấc trùng vị trí).
   void _drawCandleBody(
@@ -385,26 +397,40 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
     required double high,
     required double low,
   }) {
-    chartPaint
-      ..color = color
-      ..style = PaintingStyle.fill;
+    // chartPaint luôn là fill trong renderer này (không nơi nào khác mutate
+    // sang stroke — viền hollow dùng _hollowBorderPaint riêng) nên KHÔNG cần
+    // set lại `.style` mỗi nến; chỉ `.color` thực sự đổi theo nến.
+    chartPaint.color = color;
     if (hollow) {
-      if (bodyRect.top > high) {
-        canvas.drawRect(
-          Rect.fromLTRB(curX - lineR, high, curX + lineR, bodyRect.top),
-          chartPaint,
-        );
-      }
-      if (low > bodyRect.bottom) {
-        canvas.drawRect(
-          Rect.fromLTRB(curX - lineR, bodyRect.bottom, curX + lineR, low),
-          chartPaint,
-        );
+      final bool hasTopWick = bodyRect.top > high;
+      final bool hasBottomWick = low > bodyRect.bottom;
+      if (hasTopWick || hasBottomWick) {
+        _hollowWickPath.reset();
+        if (hasTopWick) {
+          _hollowWickPath.addRect(
+            Rect.fromLTRB(curX - lineR, high, curX + lineR, bodyRect.top),
+          );
+        }
+        if (hasBottomWick) {
+          _hollowWickPath.addRect(
+            Rect.fromLTRB(curX - lineR, bodyRect.bottom, curX + lineR, low),
+          );
+        }
+        canvas.drawPath(_hollowWickPath, chartPaint);
       }
       // Paint RIÊNG (_hollowBorderPaint, luôn stroke) — không mutate
       // chartPaint (dùng chung, mặc định fill cho mọi draw khác của
-      // renderer này) rồi phải reset lại sau mỗi nến rỗng.
-      canvas.drawRect(bodyRect, _hollowBorderPaint..color = color);
+      // renderer này) rồi phải reset lại sau mỗi nến rỗng. Cấp phát lần đầu
+      // dùng tới (style hollow) — không tốn allocation ở style solid.
+      canvas.drawRect(
+        bodyRect,
+        (_hollowBorderPaint ??= Paint()
+              ..isAntiAlias = true
+              ..filterQuality = FilterQuality.high
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = mCandleLineWidth)
+          ..color = color,
+      );
     } else {
       canvas.drawRect(
         Rect.fromLTRB(curX - lineR, high, curX + lineR, low),
