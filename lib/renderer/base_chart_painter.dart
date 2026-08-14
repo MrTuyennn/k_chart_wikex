@@ -204,6 +204,13 @@ abstract class BaseChartPainter extends CustomPainter {
 
   /// init format time
   ///
+  /// Chỉ phục vụ label CROSSHAIR (`getDate` trong `ChartPainter`) — 1 giá trị
+  /// tại 1 thời điểm nên dùng đúng 1 format cố định suốt đời painter là hợp
+  /// lý, không có nguy cơ đụng nhãn giữa nhiều tick như trục X. KHÔNG dùng
+  /// cho label trục X mặc định — xem [_axisFormatFor] (chọn lại theo mức zoom
+  /// hiện tại mỗi frame, để khớp đúng khung nến THẬT SỰ đang hiển thị chứ
+  /// không phải khung nến gốc của data).
+  ///
   /// `chartStyle.dateTimeFormat` (tương đương `KChartWidget.timeFormat`) luôn
   /// thắng nếu consumer tự set — đây chỉ là DEFAULT khi họ không custom.
   /// Default suy trực tiếp từ khoảng cách 2 nến đầu (tức khung thời gian thật
@@ -211,9 +218,6 @@ abstract class BaseChartPainter extends CustomPainter {
   ///  - khung phút (< 1h)  → `HH:mm`
   ///  - khung giờ (< 1d)   → `MM-dd HH:mm`
   ///  - khung ngày (>= 1d) → `yy-MM-dd`
-  /// Từng phải tính tay ở tầng app (vd `ChartTimeframe.axisTimeFormat` truyền
-  /// qua `timeFormat`) — chuyển hẳn vào lib để mọi consumer có sẵn hành vi
-  /// đúng mà không phải tự suy diễn lại từ enum timeframe của riêng họ.
   void initFormats() {
     if (mItemCount < 2) {
       mFormats =
@@ -235,10 +239,16 @@ abstract class BaseChartPainter extends CustomPainter {
     } else {
       mFormats = chartStyle.dateTimeFormat ?? [hour24Padded, ':', nn];
     }
-    // mGridColumns không còn quyết định số lượng/label trục thời gian nữa —
-    // xem [_updateTimeTicks]/`TimeTickPlanner` (CHART_AXES.md §5). `mFormats`
-    // ở đây phục vụ CẢ label crosshair (`getDate` trong `ChartPainter`) LẪN
-    // label trục X mặc định (`effectiveFormat` trong `_updateTimeTicks`).
+  }
+
+  /// Format label TRỤC X mặc định — xem [axisFormatFor] (`utils/time_ticks.
+  /// dart`) cho công thức đầy đủ (kết hợp tầng "tự nhiên" theo `intervalMs`
+  /// + tầng "theo zoom" theo `thresholdRung`, tách ra đó để test độc lập
+  /// không cần dựng painter). Chỉ thêm phần override của `chartStyle.
+  /// dateTimeFormat` ở đây — field này là của `KChartStyle`, không thuộc
+  /// `utils/time_ticks.dart`.
+  List<String> _axisFormatFor(double barSpacing, int intervalMs) {
+    return chartStyle.dateTimeFormat ?? axisFormatFor(barSpacing, intervalMs);
   }
 
   /// paint chart
@@ -460,18 +470,29 @@ abstract class BaseChartPainter extends CustomPainter {
 
     final double barSpacing = mPointWidth * scaleX;
     final int intervalMs = detectIntervalMs(datas!);
-    // Format label: ưu tiên `chartStyle.dateTimeFormat` (consumer tự set),
-    // nếu không thì dùng `mFormats` — format CỐ ĐỊNH suy từ khoảng cách 2
-    // nến đầu (`initFormats()`, cơ chế trước khi có CHART_AXES.md §5.3),
-    // KHÔNG phải format đổi theo tickWeight từng tick. Vẫn giữ nguyên thuật
-    // toán CHỌN TICK (weight-ladder/TimeTickPlanner) — chỉ đổi phần CHỮ hiển
-    // thị, không quay lại cơ chế mGridColumns chia đều cột cũ.
-    final List<String> effectiveFormat = chartStyle.dateTimeFormat ?? mFormats;
+    // Format label trục X: `_axisFormatFor` tự chọn 1 trong 3 pattern quen
+    // thuộc (HH:mm / MM-dd HH:mm / yy-MM-dd) theo NGƯỠNG ZOOM hiện tại —
+    // scale nhỏ (zoom xa) tự gom về ngày (bỏ giờ:phút), scale lớn (zoom gần)
+    // tự chi tiết giờ:phút. KHÔNG dùng `mFormats` ở đây (đó là format CỐ
+    // ĐỊNH suy 1 lần từ interval thô của data — chỉ còn phục vụ crosshair,
+    // xem `initFormats`). Thuật toán CHỌN TICK (weight-ladder/
+    // TimeTickPlanner) không đổi — chỉ đổi phần CHỮ hiển thị, không quay lại
+    // cơ chế mGridColumns chia đều cột cũ.
+    final List<String> effectiveFormat = _axisFormatFor(barSpacing, intervalMs);
+    // `viewportWidth: mPlotWidth` + `minVisibleTicks` (mặc định
+    // `kMinVisibleAxisTicks = 5`) — đảm bảo ÍT NHẤT ngần đó tick lọt trong
+    // khung nhìn hiện tại, không chỉ "không trống" như Fallback B bên dưới.
+    // Cần nhất với interval lớn (nến 4h/1D) zoom sâu: weight-ladder có thể
+    // nhảy thẳng lên 1 bậc rất thưa (DAY → MONTH), khiến chỉ còn đúng 1 tick
+    // dù màn hình còn thừa chỗ — xem giải thích đầy đủ ở
+    // `buildTimeTickPlan` (time_ticks.dart).
     final List<TimeTick> plan = timeTickPlanner.getOrBuild(
       candles: datas!,
       barSpacing: barSpacing,
       intervalMs: intervalMs,
       forcedFormat: effectiveFormat,
+      viewportWidth: mPlotWidth,
+      minVisibleTicks: kMinVisibleAxisTicks,
     );
 
     final ticks = <({int index, double x, String label})>[];

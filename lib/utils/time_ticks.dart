@@ -14,6 +14,13 @@ import 'date_format_util.dart';
 /// Khoảng cách tối thiểu (px) giữa 2 label thời gian liền kề.
 const double kMinGapX = 64.0;
 
+/// Số tick tối thiểu MUỐN thấy trong 1 khung nhìn rộng `viewportWidth` —
+/// dùng làm default cho [buildTimeTickPlan]/[TimeTickPlanner.getOrBuild]
+/// tham số `minVisibleTicks`. Đây là target, không phải hằng cứng — chart
+/// hẹp hơn `kMinVisibleAxisTicks * kMinGapX` px thì không thể đạt đúng số
+/// này mà không phá `kMinGapX` (xem giải thích ở `buildTimeTickPlan`).
+const int kMinVisibleAxisTicks = 5;
+
 /// Hệ số "dư" ứng viên khi lọc threshold — giữ nhiều ứng viên hơn mức sẽ sống
 /// sót qua bước đóng gói (§5.1), để rung không nhảy nguyên bậc mỗi khi hết chỗ.
 const double kTickSurplus = 4.0;
@@ -134,6 +141,101 @@ int thresholdRung(double barSpacing, int intervalMs) {
   return _kLadder.last.weight;
 }
 
+/// 3 pattern cố định dùng cho nhãn TRỤC X mặc định (không custom
+/// `timeFormat`/`dateTimeFormat`) — mịn nhất tới thô nhất.
+const List<String> kAxisFormatMinute = [hour24Padded, ':', nn];
+const List<String> kAxisFormatHour = [mm, '-', dd, ' ', hour24Padded, ':', nn];
+const List<String> kAxisFormatDay = [yy, '-', mm, '-', dd];
+
+/// Chọn 1 trong 3 pattern trên cho nhãn trục X mặc định — kết hợp 3 ràng
+/// buộc ĐỘC LẬP, lấy tầng THÔ HƠN giữa các bên:
+///
+/// - **Tầng "tự nhiên"** suy từ chính `intervalMs`: nến >= 1 ngày (`kDay`
+///   trở lên trên trục thời gian thực) không bao giờ có lý do hợp lệ để
+///   hiện giờ:phút (luôn rơi đúng 00:00 local do bản chất nến ngày) — LUÔN
+///   `yy-MM-dd` bất kể zoom; nến khung giờ (`>= 1h, < 1d`) tối thiểu phải
+///   kèm ngày (`MM-dd HH:mm`) để tránh đụng nhãn giữa các NGÀY khác nhau có
+///   cùng giờ-trong-ngày; nến khung phút (`< 1h`) không cần ràng buộc gì
+///   thêm, mịn nhất `HH:mm` cũng đủ.
+/// - **Tầng "theo zoom" (từ threshold)** suy từ [thresholdRung] — cùng hàm
+///   quyết định tick nào ĐỦ ĐIỀU KIỆN làm ứng viên (TRƯỚC khi đóng gói theo
+///   `kMinGapX`). Zoom càng ra xa, ngưỡng weight cần thiết càng cao — khi nó
+///   chạm mốc [kDay] trở lên, format tự đổi sang `yy-MM-dd`.
+/// - **Tầng "theo zoom" (từ mật độ ngày)** — bổ sung RIÊNG cho tier2, xem
+///   chi tiết + lý do cần thiết ngay trong thân hàm bên dưới (đo TRỰC TIẾP
+///   xem 1 ngày lịch có chiếm đủ `kMinGapX` px để 2 tick cùng ngày có thể
+///   cùng sống sót qua đóng gói hay không — không phụ thuộc `threshold`).
+///
+/// **Vì sao cần CẢ HAI, không chỉ 1 trong 2:**
+///  - Chỉ dùng tầng theo zoom: nến 30 phút/4h zoom ra xa mà format vẫn cho
+///    phép `HH:mm` (chưa chạm ngưỡng) thì tick đầu-ngày (00:00 local) vẫn có
+///    thể bị chọn cùng lúc với tick giữa-ngày khác giờ — hoạ hiếm, nhưng
+///    tầng tự nhiên xử lý sẵn nên không cần lo riêng.
+///  - Chỉ dùng tầng tự nhiên: sẽ KHÔNG bao giờ tự đổi sang `yy-MM-dd` khi
+///    zoom ra xa với nến khung phút/giờ (30m/4h) — đúng bug đã gặp: format
+///    khoá cứng theo interval GỐC khiến tick đầu-ngày vẫn hiện `HH:mm`/
+///    `MM-dd HH:mm` → nhiều tick cùng lúc trông như lặp lại "00:00".
+///  - Chỉ dùng tầng theo zoom, THIẾU tầng tự nhiên: với nến interval đã
+///    `>= 1 ngày` (1D trở lên), `thresholdRung` gần như LUÔN kẹt ở mức tối
+///    thiểu bất kể `barSpacing` — vì `period = max(rung.nominalPeriodMs,
+///    intervalMs)` trong `thresholdRung` bị chính `intervalMs` (rất lớn) áp
+///    trần từ bậc thấp nhất của ladder, khiến `required` hầu như luôn nhỏ
+///    hơn. Xác nhận bằng cách tính tay cho interval=86400000 ở dải
+///    `barSpacing` thực tế (2.2–24.2px, `pointWidth(11) *
+///    [minScale(0.2)..maxScale(2.2)]` mặc định) — `threshold` luôn dưới
+///    `kHour1`. Nếu chỉ dùng tầng theo zoom, nến 1D sẽ bị hiện `HH:mm` (in
+///    "00:00" lặp lại MỌI tick) kể cả khi zoom vào GẦN, không chỉ lúc zoom
+///    xa — nặng hơn cả bug gốc.
+List<String> axisFormatFor(double barSpacing, int intervalMs) {
+  final int naturalTier = intervalMs >= 24 * 60 * 60 * 1000
+      ? 2
+      : intervalMs >= 60 * 60 * 1000
+      ? 1
+      : 0;
+
+  final int threshold = thresholdRung(barSpacing, intervalMs);
+  final int zoomTierFromThreshold = threshold >= kDay
+      ? 2
+      : (threshold >= kHour1 ? 1 : 0);
+
+  // Bổ sung 1 điều kiện AN TOÀN riêng cho tier2, ĐỘC LẬP với `threshold`:
+  // nếu 1 ngày lịch chiếm ÍT HƠN `kMinGapX` px ở `barSpacing` này thì 2 tick
+  // BẤT KỲ (thật hay filler — không quan trọng) cùng ngày chắc chắn cách
+  // nhau < kMinGapX, nên bước đóng gói `kMinGapX` (áp dụng đều cho MỌI ứng
+  // viên, xem bucket-packing trong `buildTimeTickPlan`) TỰ ĐỘNG đảm bảo tối
+  // đa 1 tick sống sót/ngày — an toàn tuyệt đối để hiện `yy-MM-dd` mà không
+  // cần biết cụ thể tick nào thật/filler.
+  //
+  // **Vì sao cần thêm điều kiện này — chỉ `threshold` không đủ:** `threshold`
+  // là ngưỡng để 1 nến được coi là ỨNG VIÊN, tính TRƯỚC bước đóng gói — với
+  // nến 1H ở `barSpacing≈2.2` (zoom hết cỡ, `minScale=0.2` mặc định),
+  // `threshold` chỉ đạt `kHour12`, KHÔNG đạt `kDay`, dù 2 ứng viên cùng ngày
+  // gần nhất (00:00 và 12:00, cách nhau 12 nến × 2.2px ≈ 26.4px) chắc chắn
+  // đụng nhau khi đóng gói (< kMinGapX=64px) — plan CUỐI CÙNG trên thực tế
+  // đã tự nhiên ≤1 tick/ngày, chỉ là `threshold` (đo TRƯỚC đóng gói) đánh giá
+  // sai là "chưa đủ thưa". Hệ quả nếu thiếu điều kiện này: nến 5m/15m/30m/1H
+  // KẸT VĨNH VIỄN ở tier "MM-dd HH:mm", không bao giờ lên được `yy-MM-dd` dù
+  // zoom tới đúng `minScale` — bug thực tế đã gặp, xác nhận bằng cách tính
+  // tay `threshold` cho từng khung ở `barSpacing=2.2`: 5m/15m/30m/1H chỉ đạt
+  // 20–23, thiếu hẳn so với `kDay=30`.
+  //
+  // Dùng `<` (không phải `<=`) — tại đúng `pixelsPerDay == kMinGapX`, 2 nến
+  // ở 2 MÉP xa nhau nhất trong cùng 1 ngày cách nhau ĐÚNG `kMinGapX`, không
+  // đụng theo điều kiện `< kMinGapX` của bucket-packing — cần dư ra 1 chút
+  // mới chắc chắn.
+  final double pixelsPerDay =
+      (24 * 60 * 60 * 1000 / intervalMs) * barSpacing;
+  final int zoomTierFromDayDensity = pixelsPerDay < kMinGapX ? 2 : 0;
+
+  final int zoomTier = zoomTierFromThreshold > zoomTierFromDayDensity
+      ? zoomTierFromThreshold
+      : zoomTierFromDayDensity;
+  final int tier = naturalTier > zoomTier ? naturalTier : zoomTier;
+  if (tier >= 2) return kAxisFormatDay;
+  if (tier >= 1) return kAxisFormatHour;
+  return kAxisFormatMinute;
+}
+
 /// 1 tick đã chọn trên trục thời gian — toạ độ pixel do painter tính (dùng lại
 /// đúng 1 hệ quy chiếu `translateXtoX(getX(index))` đang có, không tự bịa toạ
 /// độ riêng — I2/I6).
@@ -177,12 +279,21 @@ class _Candidate {
 /// đổi — xem [TimeTickPlanner] cho phần cache.
 ///
 /// Không bao giờ trả về rỗng khi `candles` không rỗng — Fallback A (bước đều
-/// theo MIN_GAP_X) đảm bảo điều này (§5.2, T1).
+/// theo MIN_GAP_X) đảm bảo điều này (§5.2, T1). Đó chỉ là cam kết "≥1 tick,
+/// không bao giờ trống" — KHÔNG cam kết đủ MẬT ĐỘ theo bề rộng màn hình:
+/// interval lớn (vd nến 4h) zoom rất sâu có thể khiến ngưỡng weight nhảy
+/// thẳng lên hẳn 1 bậc rất thưa (DAY → MONTH, cách nhau ~30 lần) trong khi
+/// ngay bên dưới đã có Fallback B chỉ hiện ĐÚNG 1 tick giữa màn hình, dù
+/// viewport còn thừa chỗ cho nhiều nhãn hơn. `viewportWidth`/`minVisibleTicks`
+/// (mặc định [kMinVisibleAxisTicks]) xử lý đúng trường hợp này — xem đoạn
+/// "đảm bảo mật độ tối thiểu" bên dưới.
 List<TimeTick> buildTimeTickPlan({
   required List<KLineEntity> candles,
   required double barSpacing,
   required int intervalMs,
   List<String>? forcedFormat,
+  double viewportWidth = 0,
+  int minVisibleTicks = kMinVisibleAxisTicks,
 }) {
   if (candles.isEmpty || barSpacing <= 0) return const [];
   _assignTickWeights(candles);
@@ -233,6 +344,26 @@ List<TimeTick> buildTimeTickPlan({
 
   accepted.sort((a, b) => a.absX.compareTo(b.absX));
 
+  // Đảm bảo mật độ tối thiểu (§5.2-ext, KHÁC Fallback A ở trên — Fallback A
+  // chỉ kích hoạt khi `candidates` RỖNG hoàn toàn; đây áp dụng LUÔN, kể cả
+  // khi weight-ladder đã cho vài tick nhưng chúng THƯA hơn
+  // `viewportWidth/minVisibleTicks` — đúng trường hợp nến 4h zoom sâu). Chạy
+  // SAU khi đóng gói MIN_GAP_X xong (không trộn vào `candidates` trước đó —
+  // đã thử, 1 tick THẬT nằm giữa 2 tick lưới-đều có thể loại CẢ HAI nếu cả
+  // hai cùng trong bán kính `kMinGapX`, làm khoảng trống PHÌNH to hơn dự
+  // kiến thay vì thu hẹp; xác nhận bằng test — quan sát gap 132px dù target
+  // chỉ 79px). Ở đây lấp trực tiếp từng khoảng trống > `maxGap` trong
+  // [accepted] đã ổn định, không đụng vào tick nào đã có.
+  if (viewportWidth > 0 && minVisibleTicks > 1) {
+    _fillDensityGaps(
+      accepted: accepted,
+      candles: candles,
+      barSpacing: barSpacing,
+      viewportWidth: viewportWidth,
+      minVisibleTicks: minVisibleTicks,
+    );
+  }
+
   return accepted
       .map(
         (c) => TimeTick(
@@ -246,6 +377,88 @@ List<TimeTick> buildTimeTickPlan({
         ),
       )
       .toList();
+}
+
+/// Lấp các đoạn TRỐNG quá rộng trong [accepted] (đã sort theo `absX`, sau
+/// bước đóng gói `kMinGapX`) để bất kỳ cửa sổ rộng [viewportWidth] nào cũng
+/// thấy ≥ [minVisibleTicks] tick, mutate `accepted` in-place rồi sort lại.
+///
+/// `maxGap = max(kMinGapX, viewportWidth / minVisibleTicks)` — chia cho N
+/// (không phải N-1): 1 cửa sổ rộng W chứa các điểm cách đều `g` luôn có ít
+/// nhất `floor(W/g)` điểm ở VỊ TRÍ CUỘN XẤU NHẤT (cửa sổ lệch pha so với
+/// lưới điểm); cần `g <= W/N` mới chắc chắn `floor(W/g) >= N` ở MỌI vị trí
+/// — đã verify bằng cách quét toàn bộ vị trí cửa sổ có thể (`g <= W/(N-1)`
+/// cho kết quả tệ nhất chỉ N-2 tick, không đạt N).
+///
+/// Mỗi đoạn `[left, right]` (kể cả 2 mép — trước tick đầu tiên/sau tick cuối
+/// cùng đã chọn, tới đúng mép dữ liệu) rộng hơn `maxGap` được CHIA ĐỀU theo
+/// đúng chiều dài ĐOẠN ĐÓ (không phải theo 1 lưới chỉ số cố định toàn cục —
+/// đã thử, lưới cố định không thích ứng theo độ dài từng đoạn cụ thể nên
+/// luôn để lại 1 "đuôi" thừa/thiếu ở mép nối với tick thật, có lúc để hở gap
+/// 92px dù target chỉ 80px, xác nhận bằng test — 1 đoạn dài 409px lẽ ra cần
+/// đúng 5 điểm chèn (409/6≈68px/mảnh) nhưng lưới cố định step=79px chỉ chèn
+/// vừa 4 điểm rồi bó tay ở phần dư). Số mảnh chọn theo `idealPieces =
+/// ceil(gap / (maxGap - barSpacing))` — trừ đi 1 `barSpacing` làm biên an
+/// toàn cho sai số làm tròn khi quy đổi vị trí phân số về chỉ số nến gần
+/// nhất (mỗi điểm có thể lệch tới `barSpacing/2`, 2 điểm liền kề cộng dồn
+/// tối đa `barSpacing`) — không trừ biên này từng cho gap thực tế 77px dù
+/// target 72px, xác nhận bằng test. Đồng thời KHÔNG được chia dày hơn mức
+/// mỗi mảnh ≥ `kMinGapX` (đọc được, ưu tiên hơn target N khi 2 điều kiện
+/// xung đột — viewport quá hẹp so với `minVisibleTicks`) — chốt bằng
+/// `pieces = min(idealPieces, maxPieces)`.
+///
+/// Chạy 1 lần khi build plan (không phụ thuộc `scrollOffset`) nên an toàn
+/// với I4 — chỉ đổi khi `barSpacing`/`interval`/`candles.length`/
+/// `viewportWidth` đổi, đúng lúc plan được rebuild theo cache key ở
+/// [TimeTickPlanner].
+void _fillDensityGaps({
+  required List<_Candidate> accepted,
+  required List<KLineEntity> candles,
+  required double barSpacing,
+  required double viewportWidth,
+  required int minVisibleTicks,
+}) {
+  final double maxGap = math.max(kMinGapX, viewportWidth / minVisibleTicks);
+  // Biên an toàn cho sai số làm tròn — xem giải thích ở doc comment trên.
+  final double marginedMaxGap = math.max(barSpacing, maxGap - barSpacing);
+  final int lastIndex = candles.length - 1;
+  double absX(int i) => i * barSpacing + barSpacing / 2;
+
+  final List<double> boundary = [
+    absX(0),
+    for (final c in accepted) c.absX,
+    absX(lastIndex),
+  ];
+
+  final List<_Candidate> inserted = [];
+  for (int seg = 0; seg < boundary.length - 1; seg++) {
+    final double left = boundary[seg];
+    final double right = boundary[seg + 1];
+    final double gap = right - left;
+    if (gap <= maxGap) continue;
+
+    final int idealPieces = (gap / marginedMaxGap).ceil();
+    final int maxPieces = math.max(1, (gap / kMinGapX).floor());
+    final int pieces = math.min(idealPieces, maxPieces);
+    if (pieces <= 1) continue;
+
+    double prevX = left;
+    for (int k = 1; k <= pieces - 1; k++) {
+      final double targetX = left + gap * k / pieces;
+      final int idx = ((targetX - barSpacing / 2) / barSpacing)
+          .round()
+          .clamp(0, lastIndex);
+      final double x = absX(idx);
+      // Backstop cho sai số làm tròn còn sót — `pieces` đã tính để mỗi mảnh
+      // ≥ kMinGapX + biên an toàn ở trên, hiếm khi kích hoạt nhánh này.
+      if (x - prevX < kMinGapX || right - x < kMinGapX) continue;
+      inserted.add(_Candidate(idx, x, candles[idx].tickWeight ?? kMinor));
+      prevX = x;
+    }
+  }
+
+  accepted.addAll(inserted);
+  accepted.sort((a, b) => a.absX.compareTo(b.absX));
 }
 
 /// Cache kế hoạch tick giữa các frame — CHỈ build lại khi
@@ -277,13 +490,15 @@ List<TimeTick> buildTimeTickPlan({
 /// với sai số nhỏ cỡ này).
 class TimeTickPlanner {
   List<TimeTick>? _cachedPlan;
-  (int, int, int, int, String)? _cachedKey;
+  (int, int, int, int, String, int, int)? _cachedKey;
 
   List<TimeTick> getOrBuild({
     required List<KLineEntity> candles,
     required double barSpacing,
     required int intervalMs,
     List<String>? forcedFormat,
+    double viewportWidth = 0,
+    int minVisibleTicks = kMinVisibleAxisTicks,
   }) {
     final key = (
       identityHashCode(candles),
@@ -291,6 +506,11 @@ class TimeTickPlanner {
       barSpacing.round(),
       intervalMs,
       forcedFormat?.join('|') ?? '',
+      // Làm tròn giống `barSpacing` — viewportWidth chỉ đổi khi resize/xoay
+      // màn hình, không đổi khi pan/zoom, nhưng vẫn làm tròn cho nhất quán
+      // và tránh cache-miss vì sai số dưới-px không ảnh hưởng kết quả chọn.
+      viewportWidth.round(),
+      minVisibleTicks,
     );
     if (key == _cachedKey && _cachedPlan != null) {
       return _cachedPlan!;
@@ -300,6 +520,8 @@ class TimeTickPlanner {
       barSpacing: barSpacing,
       intervalMs: intervalMs,
       forcedFormat: forcedFormat,
+      viewportWidth: viewportWidth,
+      minVisibleTicks: minVisibleTicks,
     );
     _cachedKey = key;
     _cachedPlan = plan;

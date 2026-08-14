@@ -95,7 +95,7 @@ KChartWidget(
   showNowPrice: true,
   showInfoDialog: true,
   mBaseHeight: 300,
-  // timeFormat: omitted → format auto-derived from candle interval (recommended default, see "Time format" below)
+  // timeFormat: omitted → axis format adapts to zoom, crosshair follows candle interval (recommended default, see "Time format" below)
   onLoadMore: (isLeft) {
     // load more data when user scrolls to the edge
   },
@@ -181,7 +181,7 @@ DataUtil.calculateAll(data, mainIndicators, secondaryIndicators);
 | `showInfoDialog`        | `bool`                     | `true`                    | Show info on long-press/tap         |
 | `isTapShowInfoDialog`   | `bool`                     | `false`                   | Single tap shows crosshair + dialog |
 | `materialInfoDialog`    | `bool`                     | `true`                    | Material vs Cupertino dialog style  |
-| `timeFormat`            | `List<String>?`            | `null`                    | Force 1 fixed format for every X-axis tick. `null` (default) = format auto-derived from the candle interval (minute → `HH:mm`, hour → `MM-dd HH:mm`, day → `yy-MM-dd`) — see [Time format](#time-format) |
+| `timeFormat`            | `List<String>?`            | `null`                    | Force 1 fixed format for every tick. `null` (default) = axis picks minute/hour/day pattern from the current zoom level, crosshair picks it once from the candle interval — see [Time format](#time-format) |
 | `fixedLength`           | `int`                      | `2`                       | Decimal places for price labels     |
 | `verticalTextAlignment` | `VerticalTextAlignment`    | `right`                   | Price label side (`left`/`right`)   |
 | `hideGrid`              | `bool`                     | `false`                   | Hide grid lines                     |
@@ -527,15 +527,23 @@ detailBuilder: (KLineEntity entity) {
 
 ## Time format
 
-**Default (`timeFormat: null` — recommended):** the package picks a fixed format for you from the actual gap between your candles (checked once from the first two entries in `datas`) and applies it to every tick + the crosshair label:
+`timeFormat` (equivalently `KChartStyle.dateTimeFormat`) uses the same 3 patterns in both places time gets rendered — **X-axis ticks** and the **crosshair label** — but with `timeFormat: null` (default) each picks WHICH of the 3 patterns differently:
 
-- gap < 1 hour (e.g. 1m/5m/15m/30m candles) → `HH:mm`
-- gap < 1 day (e.g. 1H/4H candles) → `MM-dd HH:mm`
-- gap ≥ 1 day (e.g. 1D candles) → `yy-MM-dd`
+- `HH:mm`
+- `MM-dd HH:mm`
+- `yy-MM-dd`
 
-You don't need to compute this yourself from whatever timeframe enum your app uses — just leave `timeFormat` unset and switch `datas` to a different candle interval; the label format follows automatically.
+**Crosshair — picked once from the candle interval**, fixed for the chart's lifetime: gap between your first two candles < 1 hour (1m/5m/15m/30m) → `HH:mm`; < 1 day (1H/4H) → `MM-dd HH:mm`; ≥ 1 day (1D) → `yy-MM-dd`. Reasonable since the crosshair only ever shows 1 value at a time — no risk of two labels colliding.
 
-**Force 1 fixed format for every tick** — use a predefined format or build your own (`List<String>`, tokens from `lib/utils/date_format_util.dart`: `yyyy`, `yy`, `mm`, `dd`, `hour24Padded`, `nn`...) to override the default above:
+**X-axis ticks — re-evaluated every frame from the current zoom level**, so it changes as you pinch in/out on the same dataset instead of staying fixed to the candle interval:
+
+- Zoomed in enough that ticks are still sub-hourly apart → `HH:mm` (compact, no date needed).
+- Ticks are sub-daily apart, or the candle interval itself is ≥ 1 hour (1H/4H, so any 2 ticks could land on the same time-of-day on different days) → `MM-dd HH:mm`.
+- Zoomed out far enough that only day/month/year-boundary candles survive, or the candle interval itself is ≥ 1 day (1D, which is always local midnight) → `yy-MM-dd` — the hour/minute is dropped because at that point it's either meaningless (1D candles have no real time-of-day) or actively misleading (every surviving tick would print `"00:00"` with nothing to tell the days apart).
+
+In short: zoom out and the axis collapses to dates; zoom in and it opens back up to `HH:mm` — automatically, per timeframe, without you tracking which timeframe is selected.
+
+**Force 1 fixed format for both, regardless of zoom** — use a predefined format or build your own (`List<String>`, tokens from `lib/utils/date_format_util.dart`: `yyyy`, `yy`, `mm`, `dd`, `hour24Padded`, `nn`...) to override both defaults above:
 
 ```dart
 // 2024-01-15
@@ -550,7 +558,7 @@ timeFormat: const [yyyy, '/', mm, '/', dd]
 
 ### Migrating off a hand-rolled per-timeframe format
 
-If your app previously mapped its own timeframe (1m/5m/15m/.../1D) to a `List<String>` and passed it in on every rebuild, that logic is now redundant — the package derives the same result from the candle data itself.
+If your app previously mapped its own timeframe (1m/5m/15m/.../1D) to a `List<String>` and passed it in as `timeFormat` on every rebuild, that logic is now redundant — and worse than the built-in default, since a format picked once from the timeframe can't react to zoom the way the axis default does (see above).
 
 ```dart
 // Before
@@ -570,11 +578,11 @@ KChartWidget(
 // After — just delete the getter and the parameter
 KChartWidget(
   // ...
-  // timeFormat: omitted, the package figures it out from `datas`
+  // timeFormat: omitted, axis + crosshair pick their own defaults
 )
 ```
 
-Keep `timeFormat` around only if you actually want something the built-in 3-tier default doesn't produce (a different locale, a monthly rollup, always-show-year, etc.).
+Keep `timeFormat` around only if you actually want the SAME fixed pattern on the axis at every zoom level (a different locale, always-show-year, matching some other UI element, etc.) — otherwise the zoom-aware default reads better once you've compared the two.
 
 Either way, tick *selection* (which candles get a label, spacing, pan/zoom stability) always follows the same weight-ladder algorithm — `timeFormat`/`dateTimeFormat` only changes the TEXT on each tick.
 
