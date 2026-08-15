@@ -221,6 +221,8 @@ DataUtil.calculateAll(data, mainIndicators, secondaryIndicators);
 | Parameter               | Type      | Default | Description                                  |
 | ----------------------- | --------- | ------- | -------------------------------------------- |
 | `livePrice`             | `double?` | `null`  | Real-time price for now-price line           |
+| `bidPrice`/`askPrice`   | `double?` | `null`  | Best bid/best ask — draws 2 floating badges near the now-price line when **both** are set (order book) |
+| `bidLabel`/`askLabel`   | `String`  | `'Bid'`/`'Ask'` | Text shown before the price in the bid/ask badges |
 | `backgroundLogo`        | `Widget?` | `null`  | Watermark widget centered in main chart area |
 | `backgroundLogoOpacity` | `double`  | `1.0`   | Watermark opacity (0.0–1.0)                  |
 
@@ -278,6 +280,28 @@ if (_lastRender == null || now - _lastRender! > 16) {
   _lastRender = now;
 }
 ```
+
+---
+
+## Bid/Ask badges (order book)
+
+Pass `bidPrice`/`askPrice` (best bid, best ask) to draw 1 combined box near the now-price line: a left column stacking Ask (red) above Bid (green), and a right cell — 1 row tall, vertically centered, not stretched to match the left column's full height — showing the live price. Same colors as the now-price badge (`KChartColors.livePriceStyle.upColor`/`dnColor`), and it **replaces** the standalone now-price badge (the dashed now-price line itself is unaffected, still always drawn):
+
+```dart
+KChartWidget(
+  _datas, chartStyle, chartColors,
+  livePrice: _livePrice,
+  bidPrice: orderBook?.bids.firstOrNull?.price,   // highest buy price
+  askPrice: orderBook?.asks.firstOrNull?.price,   // lowest sell price
+  // bidLabel: 'Bid', askLabel: 'Ask',             // override for i18n
+  ...
+)
+```
+
+- Both must be non-null to draw the box — there's no fallback like `livePrice`'s `?? datas.last.close`. When either is `null`, the chart falls back to the plain now-price badge (flag + number, docked per `verticalTextAlignment`) as if `bidPrice`/`askPrice` were never set.
+- Positioned per `verticalTextAlignment` (default `right` — docked at the price axis edge, same side the now-price badge used to occupy), vertically centered on the now-price line's Y — so it visually reads as "this box IS the current price, broken down into bid/ask."
+
+**Performance note:** every non-`null` change to `bidPrice`/`askPrice` triggers `ChartPainter.shouldRepaint` → a full repaint. Order books typically update at high frequency over WebSocket, so if the box isn't currently shown to the user, pass `null` for both instead of computing real values and hiding the box in your own UI — a `null` → `null` change is a no-op for `shouldRepaint`, so ticks arriving while the box is toggled off cost nothing. The bundled `example` app follows this pattern with a `showBidAsk` toggle (`ChartBloc`/`ChartState`) gating what's passed to `bidPrice`/`askPrice`, not just what's drawn.
 
 ---
 

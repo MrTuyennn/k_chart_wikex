@@ -82,6 +82,28 @@ class KChartWidget extends StatefulWidget {
   final double maxScale;
   final double? livePrice;
 
+  /// Best bid (giá mua cao nhất)/best ask (giá bán thấp nhất) từ order book —
+  /// khi CẢ HAI cùng non-null, vẽ 1 box gộp (đóng theo `verticalTextAlignment`
+  /// — mặc định `right`, sát trục giá bên phải): cột trái 2 ô Ask (đỏ,
+  /// trên)/Bid (xanh, dưới) xếp chồng, cột phải 1 ô live price cao gấp đôi —
+  /// tất cả neo tại ĐÚNG Y của đường now-price (thay hẳn badge now-price cũ,
+  /// tránh hiện live price 2 nơi cùng lúc). Thiếu 1 trong 2
+  /// (`null`) thì không vẽ box này — [livePrice] tự rơi về badge now-price
+  /// gốc (flag + số, đóng theo `verticalTextAlignment`) như chưa từng có
+  /// `bidPrice`/`askPrice`, không có fallback nào giữa `bidPrice`/`askPrice`
+  /// với nhau. Dùng lại đúng màu `chartColors.livePriceStyle.upColor`/
+  /// `dnColor` (bid xanh/ask đỏ, khớp quy ước buy=up/sell=down đã dùng cho
+  /// now-price) — ô live price cũng đổi màu up/down y hệt badge cũ.
+  final double? bidPrice;
+  final double? askPrice;
+
+  /// Nhãn text hiển thị trước giá trong badge — mặc định tiếng Anh, đổi được
+  /// cho app đa ngôn ngữ (khác `chart_translations.dart`'s
+  /// `DepthChartTranslations` — chỉ 2 field đơn giản nên không cần model
+  /// riêng).
+  final String bidLabel;
+  final String askLabel;
+
   final KChartController? controller;
   final bool isLoadingMore;
 
@@ -109,6 +131,10 @@ class KChartWidget extends StatefulWidget {
     required this.detailBuilder,
     required this.isTrendLine,
     this.livePrice,
+    this.bidPrice,
+    this.askPrice,
+    this.bidLabel = 'Bid',
+    this.askLabel = 'Ask',
     this.xFrontPadding = 100,
     this.mainIndicators = const [],
     this.secondaryIndicators = const [],
@@ -386,6 +412,10 @@ class _KChartWidgetState extends State<KChartWidget>
       effectiveChartStyle,
       widget.chartColors,
       livePrice: widget.livePrice,
+      bidPrice: widget.bidPrice,
+      askPrice: widget.askPrice,
+      bidLabel: widget.bidLabel,
+      askLabel: widget.askLabel,
       baseDimension: baseDimension,
       lines: List<TrendLine>.of(lines), //For TrendLine
       sink: mInfoWindowStream.sink,

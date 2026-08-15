@@ -71,6 +71,13 @@ class ChartVolumeVisibilityToggled extends ChartEvent {
   const ChartVolumeVisibilityToggled();
 }
 
+/// Bật/tắt box Ask/Bid trên chart — xem doc [ChartState.showBidAsk] vì sao
+/// mặc định tắt (order book cập nhật tần suất cao, chỉ nên trả phí repaint
+/// khi user thực sự muốn xem).
+class ChartBidAskVisibilityToggled extends ChartEvent {
+  const ChartBidAskVisibilityToggled();
+}
+
 /// Bật/tắt dark mode.
 class ChartThemeToggled extends ChartEvent {
   const ChartThemeToggled();

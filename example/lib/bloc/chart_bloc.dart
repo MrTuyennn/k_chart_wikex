@@ -92,6 +92,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     on<ChartLineModeChanged>(_onLineModeChanged);
     on<ChartCandleBodyStyleChanged>(_onCandleBodyStyleChanged);
     on<ChartVolumeVisibilityToggled>(_onVolumeVisibilityToggled);
+    on<ChartBidAskVisibilityToggled>(_onBidAskVisibilityToggled);
     on<ChartThemeToggled>(_onThemeToggled);
     on<ChartDepthVisibilityChanged>(_onDepthVisibilityChanged);
     on<ChartDepthBottomLabelCountChanged>(_onDepthBottomLabelCountChanged);
@@ -215,6 +216,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
       isFetching: true,
       hasMoreHistory: true,
       isLive: true,
+      showBidAsk: false,
     );
   }
 
@@ -625,6 +627,13 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     Emitter<ChartState> emit,
   ) {
     emit(state.copyWith(volHidden: !state.volHidden));
+  }
+
+  void _onBidAskVisibilityToggled(
+    ChartBidAskVisibilityToggled event,
+    Emitter<ChartState> emit,
+  ) {
+    emit(state.copyWith(showBidAsk: !state.showBidAsk));
   }
 
   void _onThemeToggled(ChartThemeToggled event, Emitter<ChartState> emit) {

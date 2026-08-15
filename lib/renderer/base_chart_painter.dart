@@ -279,6 +279,7 @@ abstract class BaseChartPainter extends CustomPainter {
       drawText(canvas, getItem(mVisibleStopIndex), chartStyle.space);
       drawMaxAndMin(canvas);
       drawNowPrice(canvas);
+      drawBidAsk(canvas);
 
       if (isLongPress || (isTapShowInfoDialog && isOnTap)) {
         drawCrossLineText(canvas, size);
@@ -313,6 +314,9 @@ abstract class BaseChartPainter extends CustomPainter {
 
   /// draw the current price
   void drawNowPrice(Canvas canvas);
+
+  /// draw best bid/best ask badges (order book)
+  void drawBidAsk(Canvas canvas);
 
   /// draw cross line
   void drawCrossLine(Canvas canvas, Size size);

@@ -100,6 +100,7 @@ class ChartState extends Equatable {
     required this.isFetching,
     required this.hasMoreHistory,
     required this.isLive,
+    required this.showBidAsk,
     this.livePrice,
     this.orderBook,
     this.error,
@@ -133,6 +134,17 @@ class ChartState extends Equatable {
   /// null khi chưa nhận được message nào.
   final OrderBookSnapshot? orderBook;
 
+  /// Bật/tắt box Ask/Bid trên chart (`KChartWidget.bidPrice`/`askPrice`) —
+  /// mặc định `false` (opt-in). `orderBook` cập nhật với tần suất cao qua
+  /// WS (nhiều tick/giây), mỗi lần đổi `bidPrice`/`askPrice` đều trigger
+  /// `ChartPainter.shouldRepaint` → full repaint (`calculateValue()` lại từ
+  /// đầu) — nếu box không hiển thị thì không đáng phải trả phí đó. Xem
+  /// `_buildKChart`: khi `false`, TRUYỀN THẲNG `null` cho `bidPrice`/
+  /// `askPrice` (không phải "tính rồi ẩn UI") — tick order book vẫn tới
+  /// nhưng `KChartWidget` luôn nhận `null`, `shouldRepaint` so `null == null`
+  /// không trigger gì, tránh đúng cái giá phải trả.
+  final bool showBidAsk;
+
   /// Lỗi tải dữ liệu (REST) — null khi bình thường.
   final String? error;
 
@@ -157,6 +169,7 @@ class ChartState extends Equatable {
     bool? isFetching,
     bool? hasMoreHistory,
     bool? isLive,
+    bool? showBidAsk,
     double? livePrice,
     OrderBookSnapshot? orderBook,
     Object? error = _unset,
@@ -177,6 +190,7 @@ class ChartState extends Equatable {
       isFetching: isFetching ?? this.isFetching,
       hasMoreHistory: hasMoreHistory ?? this.hasMoreHistory,
       isLive: isLive ?? this.isLive,
+      showBidAsk: showBidAsk ?? this.showBidAsk,
       livePrice: livePrice ?? this.livePrice,
       orderBook: orderBook ?? this.orderBook,
       error: identical(error, _unset) ? this.error : error as String?,
@@ -251,6 +265,7 @@ class ChartState extends Equatable {
     isFetching,
     hasMoreHistory,
     isLive,
+    showBidAsk,
     livePrice,
     // OrderBookSnapshot không override == — mỗi lần merge tạo instance mới
     // nên identity-inequality đủ để trigger rebuild.

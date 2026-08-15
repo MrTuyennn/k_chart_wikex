@@ -364,17 +364,18 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
     );
   }
 
-  /// Khối chip "Candle/Line/Volume/Live" + zoom + "Main Indicator"/
+  /// Khối chip "Candle/Line/Volume/Bid-Ask/Live" + zoom + "Main Indicator"/
   /// "Secondary Indicator" (~30 chip) — chỉ đọc `isDark`/`isLine`/
-  /// `volHidden`/`isLive`/`mainTypes`/`secondaryTypes` (xem `_buildControls`),
-  /// KHÔNG đọc `livePrice`/`orderBook`/`data` — trước đây vẫn rebuild theo
-  /// tick giá dù không hiển thị gì liên quan.
+  /// `volHidden`/`showBidAsk`/`isLive`/`mainTypes`/`secondaryTypes` (xem
+  /// `_buildControls`), KHÔNG đọc `livePrice`/`orderBook`/`data` — trước đây
+  /// vẫn rebuild theo tick giá dù không hiển thị gì liên quan.
   Widget _buildControlsRegion(BuildContext context) {
     return BlocBuilder<ChartBloc, ChartState>(
       buildWhen: (prev, curr) =>
           prev.isDark != curr.isDark ||
           prev.isLine != curr.isLine ||
           prev.volHidden != curr.volHidden ||
+          prev.showBidAsk != curr.showBidAsk ||
           prev.isLive != curr.isLive ||
           !_setEquals(prev.mainTypes, curr.mainTypes) ||
           !_setEquals(prev.secondaryTypes, curr.secondaryTypes),
@@ -965,6 +966,23 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
       onChartScaleChanged: (scale) =>
           context.read<ChartBloc>().add(ChartScaleSaved(scale)),
       livePrice: state.livePrice,
+      // Best bid/best ask — bids sort giảm dần (giá cao trước), asks sort
+      // tăng dần (giá thấp trước) nên .first của mỗi bên đúng là mức giá SÁT
+      // spread nhất (xem OrderBookMergeService._sortDesc/_sortAsc).
+      //
+      // Chỉ tính khi `showBidAsk` bật (xem doc `ChartState.showBidAsk`) —
+      // TRUYỀN THẲNG `null` khi tắt, không phải "tính rồi ẩn UI": orderBook
+      // vẫn cập nhật tần suất cao qua WS bất kể toggle, nhưng nếu luôn tính
+      // + truyền `bidPrice`/`askPrice` thật thì MỌI tick order book đều làm
+      // `ChartPainter.shouldRepaint` trả `true` → full repaint tốn kém dù
+      // box không hề hiển thị. Giữ `null` khi tắt để `shouldRepaint` so
+      // `null == null`, không trigger gì từ nguồn tick này.
+      bidPrice: state.showBidAsk
+          ? state.orderBook?.bids.firstOrNull?.price.toDouble()
+          : null,
+      askPrice: state.showBidAsk
+          ? state.orderBook?.asks.firstOrNull?.price.toDouble()
+          : null,
       showNowPrice: true,
       showInfoDialog: true,
       mBaseHeight: 280,
@@ -1184,6 +1202,15 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
                         state.isDark,
                         () => context.read<ChartBloc>().add(
                           const ChartVolumeVisibilityToggled(),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      _chip(
+                        'Bid/Ask',
+                        state.showBidAsk,
+                        state.isDark,
+                        () => context.read<ChartBloc>().add(
+                          const ChartBidAskVisibilityToggled(),
                         ),
                       ),
                       const SizedBox(width: 6),

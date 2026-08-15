@@ -53,6 +53,10 @@ class ChartPainter extends BaseChartPainter {
   final bool showNowPrice;
   final VerticalTextAlignment verticalTextAlignment;
   final double? livePrice;
+  final double? bidPrice;
+  final double? askPrice;
+  final String bidLabel;
+  final String askLabel;
   // khi true, bỏ qua drawBg để canvas trong suốt — dùng khi có backgroundLogo widget ở layer dưới
   final bool skipBg;
 
@@ -63,6 +67,10 @@ class ChartPainter extends BaseChartPainter {
     required this.isTrendLine, //For TrendLine
     required this.selectY, //For TrendLine
     this.livePrice,
+    this.bidPrice,
+    this.askPrice,
+    this.bidLabel = 'Bid',
+    this.askLabel = 'Ask',
     required this.sink,
     required super.datas,
     required super.scaleX,
@@ -560,12 +568,19 @@ class ChartPainter extends BaseChartPainter {
 
     nowPriceLinePaint.color = priceColor;
 
-    // vẽ đường kẻ ngang
+    // vẽ đường kẻ ngang — LUÔN vẽ (không phụ thuộc bidPrice/askPrice), vẫn
+    // là mốc "đây là mức giá hiện tại" xuyên suốt chart bất kể badge giá vẽ
+    // ở đâu.
     canvas.drawDashLine(
       Offset(0, y),
       Offset(-mTranslateX + mWidth / scaleX, y),
       nowPriceLinePaint,
     );
+
+    // Badge "flag" giá (mũi tên + số) chỉ vẽ khi KHÔNG có đủ cặp bid/ask —
+    // khi có, [drawBidAsk] vẽ 1 box gộp cả Ask/Bid/live-price (xem đó), vẽ
+    // thêm cái này nữa sẽ trùng lặp giá trị live price ở 2 nơi cùng lúc.
+    if (bidPrice != null && askPrice != null) return;
 
     // label vẽ giá — nếu textStyle không tự set color thì fallback về trắng
     // (mặc định của LivePriceStyle), tránh chữ dùng màu mặc định của
@@ -604,6 +619,122 @@ class ChartPainter extends BaseChartPainter {
     canvas.restore();
 
     tp.paint(canvas, Offset(offsetX + paddingX, top));
+  }
+
+  /// 1 box gộp — cột TRÁI 2 ô xếp chồng (Ask trên/đỏ, Bid dưới/xanh), cột
+  /// PHẢI 1 ô CAO BẰNG 1 HÀNG (không kéo dài hết chiều cao cột trái) hiện
+  /// live price (màu theo up/down như badge cũ), căn giữa theo chiều dọc
+  /// trong khối — tất cả trong CÙNG 1 khối, tâm dọc tại ĐÚNG Y của đường
+  /// now-price (không
+  /// còn map riêng theo giá thật của bid/ask nữa — đơn giản hơn hẳn bản
+  /// trước, và luôn đúng ý "đi cùng live price"). Đóng theo
+  /// [verticalTextAlignment] (mặc định `right` — sát trục giá bên phải,
+  /// khớp đúng vị trí badge now-price cũ; `left` thì đóng mép trái plot),
+  /// luôn nằm trong `mPlotWidth` nên không đè lên price-axis strip. Chỉ vẽ
+  /// khi CẢ HAI [bidPrice]/[askPrice] cùng non-null; live price vẫn theo
+  /// đúng fallback `livePrice ?? datas.last.close` như [drawNowPrice] (2 hàm
+  /// phải khớp Y với nhau — cùng 1 đường dashed).
+  @override
+  void drawBidAsk(Canvas canvas) {
+    if (bidPrice == null || askPrice == null) return;
+    if (datas == null) return;
+
+    final double value = livePrice ?? datas!.last.close;
+    final double minY = _applyScaleY(getMainY(mMainHighMaxValue));
+    final double maxY = _applyScaleY(getMainY(mMainLowMinValue));
+    final double centerY = _applyScaleY(getMainY(value)).clamp(minY, maxY);
+
+    final Color priceColor = value >= datas!.last.open
+        ? chartColors.livePriceStyle.upColor
+        : chartColors.livePriceStyle.dnColor;
+
+    const double space = 2.0; // khoảng cách từ mép plot khi đóng TRÁI
+    // Khi đóng PHẢI, cố ý cho tràn NHẸ qua price-axis strip (âm = lấn qua
+    // `mPlotWidth`) — theo yêu cầu trực tiếp, chấp nhận đè 1 phần lên vùng
+    // label giá để box nằm sát mép phải hơn nữa.
+    const double rightOverflow = -20.0;
+    const double paddingX = 6.0, paddingY = 3.0;
+    const double cellGap = 2.0; // khe hở nhỏ giữa 3 ô, tránh dính liền 1 khối
+
+    final textStyle = resolveTextStyle(chartColors.livePriceStyle.textStyle, Colors.white);
+    TextPainter buildTp(String text) =>
+        TextPainter(
+          text: TextSpan(text: text, style: textStyle),
+          textDirection: TextDirection.ltr,
+        )..layout();
+
+    final askTp = buildTp('$askLabel ${NumberUtil.formatFixed(askPrice!, fixedLength) ?? ''}');
+    final bidTp = buildTp('$bidLabel ${NumberUtil.formatFixed(bidPrice!, fixedLength) ?? ''}');
+    final priceTp = buildTp(NumberUtil.formatFixed(value, fixedLength) ?? '');
+
+    final double rowHeight = askTp.height + paddingY * 2;
+    final double leftColWidth =
+        [askTp.width, bidTp.width].reduce((a, b) => a > b ? a : b) + paddingX * 2;
+    final double rightColWidth = priceTp.width + paddingX * 2;
+    final double boxHeight = rowHeight * 2 + cellGap;
+
+    // `centerY` đã kẹp trong [minY, maxY] (1 điểm), nhưng box có CHIỀU CAO
+    // (`boxHeight`) — nếu centerY sát mép trên/dưới, nửa box vẫn có thể tràn
+    // ra ngoài [minY, maxY]. Dịch cả khối vào lại, giống cách đã sửa ở bản
+    // trước cho 2 badge riêng (nay chỉ còn 1 khối nên đơn giản hơn nhiều —
+    // không cần giữ `minGap` giữa 2 điểm nữa).
+    double top = centerY - boxHeight / 2;
+    if (top < minY) {
+      top = minY;
+    }
+    if (top + boxHeight > maxY) {
+      top = maxY - boxHeight;
+    }
+    // Trường hợp cực đoan `boxHeight > maxY - minY` (main chart thấp hơn cả
+    // box — hầu như không xảy ra trong thực tế): nhánh trên có thể đẩy
+    // `top` xuống dưới `minY` lần nữa. Ưu tiên không tràn mép TRÊN (dữ liệu
+    // nến quan trọng hơn phần đáy) — kẹp cứng lần cuối.
+    top = top.clamp(minY, maxY);
+    final double askTop = top;
+    final double bidTop = top + rowHeight + cellGap;
+
+    // Đóng theo `verticalTextAlignment` — mặc định `right` (khớp đúng cách
+    // badge now-price cũ đóng bên phải sát trục giá), cố ý tràn nhẹ qua
+    // price-axis strip (`rightOverflow` âm) theo yêu cầu. `left` thì vẫn giữ
+    // nguyên trong `mPlotWidth` như trước (không ai yêu cầu đổi nhánh này).
+    final double totalWidth = leftColWidth + cellGap + rightColWidth;
+    final double leftColLeft = verticalTextAlignment == VerticalTextAlignment.right
+        ? mPlotWidth - totalWidth - rightOverflow
+        : space;
+    final double rightLeft = leftColLeft + leftColWidth + cellGap;
+
+    void drawCell(Rect rect, Color color, TextPainter tp) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(3)),
+        Paint()..color = color,
+      );
+      tp.paint(
+        canvas,
+        Offset(
+          rect.left + (rect.width - tp.width) / 2,
+          rect.top + (rect.height - tp.height) / 2,
+        ),
+      );
+    }
+
+    drawCell(
+      Rect.fromLTWH(leftColLeft, askTop, leftColWidth, rowHeight),
+      chartColors.livePriceStyle.dnColor,
+      askTp,
+    );
+    drawCell(
+      Rect.fromLTWH(leftColLeft, bidTop, leftColWidth, rowHeight),
+      chartColors.livePriceStyle.upColor,
+      bidTp,
+    );
+    // Ô live price chỉ cao bằng 1 hàng (không kéo dài hết chiều cao Ask+Bid
+    // cộng lại) — căn giữa theo chiều dọc trong khối, để trống đều 2 bên
+    // trên/dưới trong cột phải.
+    drawCell(
+      Rect.fromLTWH(rightLeft, top + (boxHeight - rowHeight) / 2, rightColWidth, rowHeight),
+      priceColor,
+      priceTp,
+    );
   }
 
   void drawTrendLines(Canvas canvas, Size size) {
@@ -729,6 +860,14 @@ class ChartPainter extends BaseChartPainter {
   bool shouldRepaint(BaseChartPainter oldDelegate) {
     if (oldDelegate is ChartPainter) {
       if (oldDelegate.livePrice != livePrice ||
+          oldDelegate.bidPrice != bidPrice ||
+          oldDelegate.askPrice != askPrice ||
+          // Hiếm khi đổi lúc runtime (vd chuyển locale) hơn bidPrice/askPrice,
+          // nhưng vẫn là field CÓ THỂ đổi qua UI — thiếu dòng này thì badge
+          // giữ nguyên text locale cũ tới khi có lý do khác trigger repaint,
+          // đúng lớp lỗi mà comment về `bodyStyle` ngay dưới đã cảnh báo.
+          oldDelegate.bidLabel != bidLabel ||
+          oldDelegate.askLabel != askLabel ||
           oldDelegate.isTrendLine != isTrendLine ||
           oldDelegate.selectY != selectY ||
           // `chartColors` KHÔNG so nguyên object — instance mới được dựng
