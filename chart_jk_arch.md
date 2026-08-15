@@ -331,8 +331,10 @@ File chính import: `package:k_chart_jk/k_chart_plus.dart`. Re-export:
 | Export                              | Chứa gì                                                                              |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
 | `k_chart_widget.dart`               | `KChartWidget`, `TimeFormat`, `WidgetDetailBuilder`                                  |
-| `styles/k_chart_style.dart`         | `KChartStyle`, `KChartColors`                                                        |
+| `styles/k_chart_style.dart`         | `KChartStyle`, `KChartColors`, `CandleStyle`, `CandleBodyStyle`                      |
 | `styles/depth_chart_style.dart`     | `DepthChartStyle`, `DepthChartColors`                                                |
+| `styles/candle_style/candle_style_icon.dart`    | `CandleStyleIcon` — icon nhỏ (2 nến mini) minh hoạ 1 `CandleBodyStyle`, vẽ bằng `CustomPainter`. |
+| `styles/candle_style/candle_style_preview.dart` | `CandleStylePreview` — preview lớn (nến hoặc line chart) trên chuỗi giá tổng hợp cố định, dùng cho UI chọn "Kiểu K-line". |
 | `depth_chart.dart`                  | `DepthChart` widget                                                                  |
 | `chart_translations.dart`           | `DepthChartTranslations`                                                             |
 | `utils/index.dart`                  | `DataUtil`, `dateFormat`, `NumberUtil`, format tokens                                |
@@ -588,6 +590,45 @@ Constructor: `const KChartStyle([List<String>? dateTimeFormat, double volBarOpac
 | `kLineColor`       | `0xFF217AFF`         | Đường line chart (`isLine = true`).                              |
 | `kLineFillColors`  | gradient blue        | Gradient tô dưới đường line chart.                               |
 | `textStyle`        | `fontSize: 10`       | Text main chart: trục giá/thời gian, crosshair, label indicator, max/min, now-price. |
+| `bodyStyle`        | `CandleBodyStyle.solid` | Kiểu vẽ thân nến (candlestick mode) — xem ngay dưới.          |
+
+**`CandleBodyStyle`** (`MainRenderer.drawCandle`) — 4 giá trị, giống "Candle style" của TradingView/Binance:
+
+| Giá trị       | Thân nến tô đặc / chỉ viền                              |
+| ------------- | --------------------------------------------------------- |
+| `solid`       | Luôn tô đặc cả 2 chiều (mặc định, hành vi gốc).           |
+| `hollowUp`    | Nến tăng (`close > open` CHÍNH nến đó) chỉ viền, nến giảm vẫn đặc. |
+| `hollowDown`  | Nến giảm chỉ viền, nến tăng vẫn đặc.                      |
+| `hollow`      | Cả 2 chiều đều chỉ viền.                                  |
+
+Bấc nến (high-low) LUÔN vẽ đặc. Khi thân RỖNG, bấc chỉ vẽ 2 đoạn thò ra ngoài
+thân (`high` → đỉnh thân, đáy thân → `low`) — KHÔNG vẽ đoạn cắt ngang ruột
+thân, để thân thực sự rỗng (không có gạch xuyên giữa). Thân rỗng vẽ bằng
+`MainRenderer._hollowBorderPaint` — Paint RIÊNG, luôn `PaintingStyle.stroke`,
+chỉ mutate `.color`/nến — KHÔNG dùng chung `chartPaint` (Paint chính của
+renderer, mặc định fill, dùng cho mọi draw khác kể cả `drawLine` của trend
+line/now-price) để khỏi phải toggle style + reset lại mỗi nến rỗng.
+
+**`CandleBodyStyleX.isHollow({required bool rising})`** (extension trên
+enum `CandleBodyStyle`, cùng file) — nguồn sự thật DUY NHẤT cho "nến chiều
+`rising` có nên vẽ rỗng theo style này", dùng chung bởi `MainRenderer.
+drawCandle` VÀ 2 painter preview dưới đây. Trước đây bị chép tay lặp lại
+switch y hệt ở cả 3 chỗ (đã sửa qua code review — sửa công thức 1 chỗ mà
+quên chỗ khác thì preview lệch hình so với chart thật, không gì bắt được).
+
+Preview UI (không phải core rendering): `CandleStyleIcon` (icon nhỏ) và
+`CandleStylePreview` (preview lớn, nến hoặc line chart trên chuỗi giá tổng
+hợp cố định) ở `lib/styles/candle_style/` — gọi `isHollow` ở trên, không tự
+tính lại. Ví dụ dùng trong `example/lib/main.dart` (`_showSettingsSheet` →
+"Kiểu K-line", 5 lựa chọn: 4 `CandleBodyStyle` + "Đường" ứng với
+`isLine = true`).
+
+**`shouldRepaint` phải so `chartColors.candleStyle.bodyStyle` riêng**
+(`ChartPainter.shouldRepaint`, xem §11) — KHÔNG so nguyên `chartColors`
+(instance mới mỗi build dù nội dung không đổi ở nhiều app, so reference sẽ
+ép repaint mọi build). Thiếu dòng so sánh này (bug thật, đã xảy ra — bắt
+được qua code review) thì đổi `bodyStyle` qua UI không tự vẽ lại ngay, chỉ
+"ăn theo" lần repaint kế tiếp do lý do khác.
 
 #### `VolumeStyle` — panel volume
 
@@ -1248,9 +1289,13 @@ livePrice     ← bắt buộc vì livePrice nằm trong ChartPainter, không ph
 isTrendLine
 selectY
 lines         ← so sánh THEO GIÁ TRỊ (_trendLinesEqual), KHÔNG theo reference
+chartColors.candleStyle.bodyStyle   ← so field CỤ THỂ, KHÔNG so nguyên chartColors
+                                       (instance mới mỗi build ở nhiều app dù nội
+                                       dung không đổi — so reference sẽ ép repaint
+                                       mọi build, phản tác dụng)
 ```
 
-**Quy tắc:** nếu thêm field mới vào `ChartPainter`/`BaseChartPainter` mà ảnh hưởng visual → phải thêm vào `shouldRepaint`, nếu không chart sẽ không cập nhật (đã xảy ra thật với `isLine`, `isTrendLine`/`selectY`/`lines` — xem changelog).
+**Quy tắc:** nếu thêm field mới vào `ChartPainter`/`BaseChartPainter` mà ảnh hưởng visual → phải thêm vào `shouldRepaint`, nếu không chart sẽ không cập nhật (đã xảy ra thật với `isLine`, `isTrendLine`/`selectY`/`lines`, và `chartColors.candleStyle.bodyStyle` — xem changelog). Field nào nằm TRONG `chartColors` (hay bất kỳ object phức hợp nào được dựng mới mỗi build) mà cần theo dõi → so field CỤ THỂ đó (theo giá trị), không so nguyên object cha theo reference.
 
 **Bẫy `!=` trên field bị mutate in-place:** `lines` (`List<TrendLine>`) bị `KChartWidget` sửa in-place (`lines.add(...)`, `lines.removeLast()`) rồi truyền cùng reference vào `ChartPainter` mỗi build → `oldDelegate.lines` và `lines` LUÔN là cùng 1 object, so sánh `!=` không bao giờ đúng dù nội dung đã đổi. Cách sửa đúng — áp dụng cùng nguyên tắc với `datas`/`livePrice`:
 

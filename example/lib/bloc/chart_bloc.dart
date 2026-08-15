@@ -90,6 +90,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     on<ChartMainIndicatorToggled>(_onMainIndicatorToggled);
     on<ChartSecondaryIndicatorToggled>(_onSecondaryIndicatorToggled);
     on<ChartLineModeChanged>(_onLineModeChanged);
+    on<ChartCandleBodyStyleChanged>(_onCandleBodyStyleChanged);
     on<ChartVolumeVisibilityToggled>(_onVolumeVisibilityToggled);
     on<ChartThemeToggled>(_onThemeToggled);
     on<ChartDepthVisibilityChanged>(_onDepthVisibilityChanged);
@@ -150,6 +151,20 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
   Timer? _orderBookThrottle;
   static const Duration _orderBookCoalesce = Duration(milliseconds: 200);
 
+  // livePrice: bắn từ CẢ `topicKline`/`topicKlineLive` (mỗi bar) LẪN
+  // `topicThumb` (mỗi tick ticker) — 2 nguồn cộng dồn, trên cặp giao dịch
+  // sôi động có thể tới hàng chục lần/giây. Trước đây `add(_ChartLivePriceChanged)`
+  // gọi THẲNG, không coalesce như kline/order book ở trên — mỗi tick ép
+  // `BlocBuilder` gốc (bọc cả trang, không `buildWhen`) rebuild toàn bộ
+  // Scaffold + `ChartPainter` repaint lại toàn bộ nến/indicator visible,
+  // độc lập với style nến đang chọn. Đây là nguồn jank LỚN HƠN nhiều so với
+  // chi phí vẽ thêm của candle_style (vốn chỉ ăn theo mỗi lần repaint này,
+  // không tự nó gây repaint) — coalesce cùng kiểu với kline/order book để
+  // giới hạn tần suất rebuild UI, không đổi tần suất xử lý dữ liệu.
+  Timer? _livePriceThrottle;
+  double? _pendingLivePrice;
+  static const Duration _livePriceCoalesce = Duration(milliseconds: 150);
+
   static String get _topicPath => MarketEnv.symbol; // đã đúng dạng BASE/QUOTE
 
   /// true = bật sẵn TOÀN BỘ indicator lúc mở app (demo xem hết cùng lúc);
@@ -192,6 +207,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
           : {},
       savedChartScale: KChartScaleState(),
       isLine: false,
+      candleBodyStyle: CandleBodyStyle.solid,
       volHidden: false,
       isDark: false,
       showDepth: false,
@@ -430,6 +446,9 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     _pending.clear();
     _orderBookThrottle?.cancel();
     _orderBookThrottle = null;
+    _livePriceThrottle?.cancel();
+    _livePriceThrottle = null;
+    _pendingLivePrice = null;
     await _klineSub?.cancel();
     await _klineLiveSub?.cancel();
     await _thumbSub?.cancel();
@@ -447,7 +466,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
       return; // chỉ bỏ đúng frame lỗi — KHÔNG đụng vào _pending
     }
     // Live price từ kline mọi period (giá mới nhất của symbol).
-    add(_ChartLivePriceChanged(kline.close.toDouble()));
+    _queueLivePrice(kline.close.toDouble());
     if (kline.period != state.timeframe.wsPeriod) {
       return; // khác khung timeframe đang chọn
     }
@@ -463,7 +482,23 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     final thumb = tryParseThumbFrame(frame);
     // Stream global — tự lọc đúng cặp đang xem.
     if (thumb == null || thumb.symbol != MarketEnv.symbol) return;
-    add(_ChartLivePriceChanged(thumb.close));
+    _queueLivePrice(thumb.close);
+  }
+
+  /// Coalesce `_ChartLivePriceChanged` — cùng pattern `_pending`/`_throttle`
+  /// (kline) và `_orderBookMerge`/`_orderBookThrottle` (order book) ở trên:
+  /// giữ giá MỚI NHẤT, chỉ `add()` 1 lần/cửa sổ thay vì mỗi frame WS. Gọi từ
+  /// cả `_onKlineFrame` VÀ `_onThumbFrame` (2 nguồn cộng dồn tần suất).
+  void _queueLivePrice(double price) {
+    _pendingLivePrice = price;
+    _livePriceThrottle ??= Timer(_livePriceCoalesce, () {
+      _livePriceThrottle = null;
+      final pending = _pendingLivePrice;
+      _pendingLivePrice = null;
+      if (pending != null && !isClosed) {
+        add(_ChartLivePriceChanged(pending));
+      }
+    });
   }
 
   void _onTradePlateFrame(RealtimeFrame frame) {
@@ -576,6 +611,13 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     Emitter<ChartState> emit,
   ) {
     emit(state.copyWith(isLine: event.isLine));
+  }
+
+  void _onCandleBodyStyleChanged(
+    ChartCandleBodyStyleChanged event,
+    Emitter<ChartState> emit,
+  ) {
+    emit(state.copyWith(candleBodyStyle: event.bodyStyle));
   }
 
   void _onVolumeVisibilityToggled(

@@ -731,6 +731,18 @@ class ChartPainter extends BaseChartPainter {
       if (oldDelegate.livePrice != livePrice ||
           oldDelegate.isTrendLine != isTrendLine ||
           oldDelegate.selectY != selectY ||
+          // `chartColors` KHÔNG so nguyên object — instance mới được dựng
+          // lại mỗi build (vd `_demoColors(state)` trong example) dù nội
+          // dung không đổi, so reference sẽ ép repaint MỌI build (jank).
+          // `bodyStyle` là field DUY NHẤT trong chartColors hiện đổi qua
+          // tương tác UI trực tiếp (Kiểu K-line picker) — thiếu dòng này,
+          // đổi Solid/Hollow không tự vẽ lại ngay, chỉ "ăn theo" lần
+          // repaint tiếp theo do lý do khác (vd tick livePrice) mới hiện.
+          // Field `chartColors` nào khác sau này cũng đổi được qua UI thì
+          // phải thêm so sánh riêng ở đây theo đúng cách này (không so
+          // nguyên `chartColors`).
+          oldDelegate.chartColors.candleStyle.bodyStyle !=
+              chartColors.candleStyle.bodyStyle ||
           !_trendLinesEqual(oldDelegate.lines, lines)) {
         return true;
       }
