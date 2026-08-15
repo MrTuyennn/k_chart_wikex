@@ -318,6 +318,13 @@ abstract class BaseChartPainter extends CustomPainter {
   /// draw best bid/best ask badges (order book)
   void drawBidAsk(Canvas canvas);
 
+  /// Padding phải THÊM vào [xFrontPadding] (px, screen space) — hook cho
+  /// painter con cần chừa chỗ trước nến cuối cho nội dung neo mép phải mà bề
+  /// rộng chỉ tính được ở đó (vd box bid/ask — bề rộng phụ thuộc text giá,
+  /// [xFrontPadding] cố định 100px không đủ khi box rộng hơn). Base = 0 (mọi
+  /// painter con không override coi như không có gì thêm).
+  double get extraFrontPaddingPx => 0.0;
+
   /// draw cross line
   void drawCrossLine(Canvas canvas, Size size);
 
@@ -663,7 +670,7 @@ abstract class BaseChartPainter extends CustomPainter {
   }
 
   double get _effectiveRightPaddingPx =>
-      effectiveRightPaddingPx(xFrontPadding, mPlotWidth);
+      effectiveRightPaddingPx(xFrontPadding, mPlotWidth) + extraFrontPaddingPx;
 
   /// get the minimum value of translation
   double getMinTranslateX() {

@@ -621,6 +621,68 @@ class ChartPainter extends BaseChartPainter {
     tp.paint(canvas, Offset(offsetX + paddingX, top));
   }
 
+  // Padding X/Y trong mỗi ô, khe hở giữa 3 ô, khoảng cách mép trái khi đóng
+  // `left`, mức tràn qua price-axis strip khi đóng `right` (âm = lấn qua
+  // `mPlotWidth`) — tách thành static const để [_bidAskTotalWidth] (dùng bởi
+  // [extraFrontPaddingPx]) tính đúng bề rộng GIỐNG HỆT [drawBidAsk], không
+  // lệch nhau nếu sau này chỉnh số.
+  static const double _bidAskLeftSpace = 2.0;
+  static const double _bidAskRightOverflow = -20.0;
+  static const double _bidAskPaddingX = 6.0, _bidAskPaddingY = 3.0;
+  static const double _bidAskCellGap = 2.0;
+
+  /// Tổng bề rộng box bid/ask — CÙNG công thức với phần bề rộng trong
+  /// [drawBidAsk] (không vẽ gì) — dùng bởi [extraFrontPaddingPx] để chừa đủ
+  /// chỗ trước nến cuối. Trả `null` khi không đủ điều kiện vẽ box (giống hệt
+  /// điều kiện đầu [drawBidAsk]).
+  double? _bidAskTotalWidth() {
+    if (bidPrice == null || askPrice == null) return null;
+    if (datas == null) return null;
+
+    final double value = livePrice ?? datas!.last.close;
+    final textStyle = resolveTextStyle(chartColors.livePriceStyle.textStyle, Colors.white);
+    TextPainter buildTp(String text) => TextPainter(
+      text: TextSpan(text: text, style: textStyle),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final askTp = buildTp('$askLabel ${NumberUtil.formatFixed(askPrice!, fixedLength) ?? ''}');
+    final bidTp = buildTp('$bidLabel ${NumberUtil.formatFixed(bidPrice!, fixedLength) ?? ''}');
+    final priceTp = buildTp(NumberUtil.formatFixed(value, fixedLength) ?? '');
+
+    final double leftColWidth =
+        [askTp.width, bidTp.width].reduce((a, b) => a > b ? a : b) + _bidAskPaddingX * 2;
+    final double rightColWidth = priceTp.width + _bidAskPaddingX * 2;
+    return leftColWidth + _bidAskCellGap + rightColWidth;
+  }
+
+  /// Chỉ đóng `right` (mặc định — mép sát trục giá, đúng nơi box thật sự
+  /// tràn vào vùng plot) mới cần chừa chỗ; `left` đã luôn nằm gọn trong
+  /// `mPlotWidth` từ trước (không đụng tới nến cuối). Cộng thêm biên thở nhỏ
+  /// (8px) — tránh box dính sát mép nến cuối dù kỹ thuật không đè lên.
+  ///
+  /// Bối cảnh: box rộng hơn nhiều so với badge now-price cũ (2 cột thay vì
+  /// 1), trong khi `xFrontPadding` mặc định (100px) được tính cho badge cũ —
+  /// khi mới mở chart (chưa scroll), nến cuối có thể nằm ngay dưới box nếu
+  /// không chừa thêm. Xem CHANGELOG.
+  @override
+  double get extraFrontPaddingPx {
+    if (verticalTextAlignment != VerticalTextAlignment.right) return 0.0;
+    final totalWidth = _bidAskTotalWidth();
+    if (totalWidth == null) return 0.0;
+    const double breathingMargin = 8.0;
+    final double required = totalWidth + _bidAskRightOverflow + breathingMargin;
+    // `required` là TỔNG khoảng gap cần có — chỉ CỘNG THÊM phần còn thiếu so
+    // với `xFrontPadding` đã tính sẵn (không cộng thẳng `required`, tránh
+    // cộng dồn 2 lần khi `xFrontPadding` mặc định đã đủ chỗ).
+    final double basePadding = BaseChartPainter.effectiveRightPaddingPx(
+      xFrontPadding,
+      mPlotWidth,
+    );
+    final double extra = required - basePadding;
+    return extra > 0 ? extra : 0.0;
+  }
+
   /// 1 box gộp — cột TRÁI 2 ô xếp chồng (Ask trên/đỏ, Bid dưới/xanh), cột
   /// PHẢI 1 ô CAO BẰNG 1 HÀNG (không kéo dài hết chiều cao cột trái) hiện
   /// live price (màu theo up/down như badge cũ), căn giữa theo chiều dọc
@@ -634,6 +696,11 @@ class ChartPainter extends BaseChartPainter {
   /// khi CẢ HAI [bidPrice]/[askPrice] cùng non-null; live price vẫn theo
   /// đúng fallback `livePrice ?? datas.last.close` như [drawNowPrice] (2 hàm
   /// phải khớp Y với nhau — cùng 1 đường dashed).
+  ///
+  /// [extraFrontPaddingPx] chừa sẵn chỗ trước nến cuối bằng công thức bề
+  /// rộng GIỐNG HỆT box vẽ ở đây (qua [_bidAskTotalWidth]) — sửa layout ở
+  /// dưới (padding/cellGap/rightOverflow) thì sửa luôn các hằng số
+  /// `_bidAsk*` ở trên, đừng để 2 nơi lệch nhau.
   @override
   void drawBidAsk(Canvas canvas) {
     if (bidPrice == null || askPrice == null) return;
@@ -648,14 +715,6 @@ class ChartPainter extends BaseChartPainter {
         ? chartColors.livePriceStyle.upColor
         : chartColors.livePriceStyle.dnColor;
 
-    const double space = 2.0; // khoảng cách từ mép plot khi đóng TRÁI
-    // Khi đóng PHẢI, cố ý cho tràn NHẸ qua price-axis strip (âm = lấn qua
-    // `mPlotWidth`) — theo yêu cầu trực tiếp, chấp nhận đè 1 phần lên vùng
-    // label giá để box nằm sát mép phải hơn nữa.
-    const double rightOverflow = -20.0;
-    const double paddingX = 6.0, paddingY = 3.0;
-    const double cellGap = 2.0; // khe hở nhỏ giữa 3 ô, tránh dính liền 1 khối
-
     final textStyle = resolveTextStyle(chartColors.livePriceStyle.textStyle, Colors.white);
     TextPainter buildTp(String text) =>
         TextPainter(
@@ -667,11 +726,11 @@ class ChartPainter extends BaseChartPainter {
     final bidTp = buildTp('$bidLabel ${NumberUtil.formatFixed(bidPrice!, fixedLength) ?? ''}');
     final priceTp = buildTp(NumberUtil.formatFixed(value, fixedLength) ?? '');
 
-    final double rowHeight = askTp.height + paddingY * 2;
+    final double rowHeight = askTp.height + _bidAskPaddingY * 2;
     final double leftColWidth =
-        [askTp.width, bidTp.width].reduce((a, b) => a > b ? a : b) + paddingX * 2;
-    final double rightColWidth = priceTp.width + paddingX * 2;
-    final double boxHeight = rowHeight * 2 + cellGap;
+        [askTp.width, bidTp.width].reduce((a, b) => a > b ? a : b) + _bidAskPaddingX * 2;
+    final double rightColWidth = priceTp.width + _bidAskPaddingX * 2;
+    final double boxHeight = rowHeight * 2 + _bidAskCellGap;
 
     // `centerY` đã kẹp trong [minY, maxY] (1 điểm), nhưng box có CHIỀU CAO
     // (`boxHeight`) — nếu centerY sát mép trên/dưới, nửa box vẫn có thể tràn
@@ -691,17 +750,17 @@ class ChartPainter extends BaseChartPainter {
     // nến quan trọng hơn phần đáy) — kẹp cứng lần cuối.
     top = top.clamp(minY, maxY);
     final double askTop = top;
-    final double bidTop = top + rowHeight + cellGap;
+    final double bidTop = top + rowHeight + _bidAskCellGap;
 
     // Đóng theo `verticalTextAlignment` — mặc định `right` (khớp đúng cách
     // badge now-price cũ đóng bên phải sát trục giá), cố ý tràn nhẹ qua
     // price-axis strip (`rightOverflow` âm) theo yêu cầu. `left` thì vẫn giữ
     // nguyên trong `mPlotWidth` như trước (không ai yêu cầu đổi nhánh này).
-    final double totalWidth = leftColWidth + cellGap + rightColWidth;
+    final double totalWidth = leftColWidth + _bidAskCellGap + rightColWidth;
     final double leftColLeft = verticalTextAlignment == VerticalTextAlignment.right
-        ? mPlotWidth - totalWidth - rightOverflow
-        : space;
-    final double rightLeft = leftColLeft + leftColWidth + cellGap;
+        ? mPlotWidth - totalWidth - _bidAskRightOverflow
+        : _bidAskLeftSpace;
+    final double rightLeft = leftColLeft + leftColWidth + _bidAskCellGap;
 
     void drawCell(Rect rect, Color color, TextPainter tp) {
       canvas.drawRRect(
