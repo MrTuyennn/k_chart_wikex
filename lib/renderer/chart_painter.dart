@@ -658,8 +658,10 @@ class ChartPainter extends BaseChartPainter {
 
   // Padding X/Y trong mỗi ô, khe hở giữa Ask/Bid, khe hở giữa box và badge
   // live price — tách thành static const cho dễ chỉnh, không dùng ở đâu
-  // khác ngoài [drawBidAsk].
-  static const double _bidAskPaddingX = 6.0, _bidAskPaddingY = 3.0;
+  // khác ngoài [drawBidAsk]. paddingX bóp lại 6→3 theo yêu cầu trực tiếp
+  // ("bóp padding trong như liveprice") — khớp giá trị cuối cùng của
+  // [_liveBadgePaddingX]/[_liveBadgePaddingY] (3/3).
+  static const double _bidAskPaddingX = 2.0, _bidAskPaddingY = 2.0;
   static const double _bidAskCellGap = 2.0;
   static const double _bidAskGapNextToFlag = 4.0;
 

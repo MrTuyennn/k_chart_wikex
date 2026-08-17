@@ -8,6 +8,10 @@ Tổ chức theo **ngày** (mới nhất ở trên). Với các mốc đã đón
 
 ## 2026-08-17
 
+- **tweak (yêu cầu trực tiếp từ user — "bóp padding trong như liveprice"):** Giảm padding TRONG mỗi ô Ask/Bid (`_bidAskPaddingX`) từ `6` xuống `3`, khớp giá trị cuối cùng của `_liveBadgePaddingX`/`_liveBadgePaddingY` (padding trong badge now-price). `_bidAskPaddingY` giữ nguyên `3` (đã bằng live-price từ trước, không cần đổi).
+  - `bidLabel`/`askLabel` KHÔNG phải tính năng mới — đã có sẵn từ trước (xem bullet "Thêm 2 badge best bid/best ask..." trong CHANGELOG), là `String` override được trên `KChartWidget`/`ChartPainter`, mặc định `'Bid'`/`'Ask'`, đổi được tự do cho bất kỳ ngôn ngữ nào (`shouldRepaint` đã so sánh field này từ khi thêm). Đã báo lại cho user thay vì làm trùng lặp; không sửa gì thêm ở phần này.
+  - Verify: `dart analyze`/`flutter analyze` sạch, toàn bộ 161 test root + 11 test example pass không đổi kết quả (test nhóm bid/ask chỉ so sánh vị trí tương đối, không hardcode giá trị padding cụ thể).
+  - File: `lib/renderer/chart_painter.dart` (`_bidAskPaddingX` 6→3, comment cập nhật).
 - **tweak (user tự sửa trực tiếp trong code, yêu cầu "optimize cho tôi"):** Giảm tiếp padding badge now-price — `_liveBadgePaddingX` (padding TRONG) `5→3`, `_liveBadgeSpace` (padding NGOÀI) `3→0`. `_liveBadgePaddingY` giữ nguyên `3`.
   - Ở `_liveBadgeSpace = 0`: đóng `verticalTextAlignment.right` (mặc định), mép trái badge khớp CHÍNH XÁC `mPlotWidth` — không còn lấn vào plot chút nào (trước đó luôn lấn nhẹ vài px để mũi tên "chạm" đường dashed); đóng `left`, badge sát tuyệt đối mép trái canvas (`offsetX = 0`, hết khoảng hở).
   - Dùng chung giữa `drawNowPrice` và `drawBidAsk` (`flagBadgeWidth`/`flagLeft`) — đổi 1 nơi tự khớp cả 2, không cần sửa thêm.
