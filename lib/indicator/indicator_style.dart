@@ -63,8 +63,8 @@ class SARStyle extends IndicatorStyle {
   final double radius;
 
   const SARStyle({
-    this.upColor = const Color(0xFF14AD8F),
-    this.dnColor = const Color(0xFFD5405D),
+    this.upColor = const Color(0xFF0ECB81),
+    this.dnColor = const Color(0xFFF6465D),
     this.radius = 2.0,
     super.strokeWidth = 0.8,
     super.textStyle,
@@ -78,10 +78,10 @@ class SuperTrendStyle extends IndicatorStyle {
   final Color dnFillColor;
 
   const SuperTrendStyle({
-    this.upColor = const Color(0xFF14AD8F),
-    this.dnColor = const Color(0xFFD5405D),
-    this.upFillColor = const Color(0x2614AD8F),
-    this.dnFillColor = const Color(0x26D5405D),
+    this.upColor = const Color(0xFF0ECB81),
+    this.dnColor = const Color(0xFFF6465D),
+    this.upFillColor = const Color(0x260ECB81),
+    this.dnFillColor = const Color(0x26F6465D),
     super.lineWidth = 1.5,
     super.textStyle,
   });
@@ -129,8 +129,8 @@ class MACDStyle extends IndicatorStyle {
   final double macdWidth;
 
   const MACDStyle({
-    this.upColor = const Color(0xFF14AD8F),
-    this.dnColor = const Color(0xFFD5405D),
+    this.upColor = const Color(0xFF0ECB81),
+    this.dnColor = const Color(0xFFF6465D),
     this.macdColor = const Color(0xFFFFC634),
     this.difColor = const Color(0xff35cdac),
     this.deaColor = const Color(0xffb48ee3),
@@ -256,10 +256,10 @@ class IchimokuStyle extends IndicatorStyle {
     this.tenkanColor = const Color(0xFFFFC634),
     this.kijunColor = const Color(0xffb48ee3),
     this.chikouColor = const Color(0xff35cdac),
-    this.spanAColor = const Color(0xFF14AD8F),
-    this.spanBColor = const Color(0xFFD5405D),
-    this.cloudUpColor = const Color(0x2614AD8F),
-    this.cloudDownColor = const Color(0x26D5405D),
+    this.spanAColor = const Color(0xFF0ECB81),
+    this.spanBColor = const Color(0xFFF6465D),
+    this.cloudUpColor = const Color(0x260ECB81),
+    this.cloudDownColor = const Color(0x26F6465D),
     super.textStyle,
   });
 }

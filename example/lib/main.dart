@@ -23,7 +23,7 @@ class MyApp extends StatelessWidget {
       title: 'K Chart JK Demo',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF217AFF)),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFF0B90B)),
         useMaterial3: true,
       ),
       home: BlocProvider(
@@ -67,6 +67,17 @@ class ChartDemoPage extends StatefulWidget {
 class _ChartDemoPageState extends State<ChartDemoPage> {
   final KChartController _controller = KChartController();
   final ScrollController _outerScrollController = ScrollController();
+
+  // Cache cho `_demoColors` — kết quả CHỈ phụ thuộc `state.isDark` +
+  // `state.candleBodyStyle` (mọi màu khác trong đó là const literal), nhưng
+  // `_buildKChart` bị gọi lại ở MỌI rebuild của BlocBuilder gốc (build() ở
+  // trên) — kể cả rebuild do `livePrice`/`orderBook` đổi (tick giá live,
+  // tần suất cao) không hề ảnh hưởng tới màu. Không cache thì mỗi tick giá
+  // dựng lại ~20 style object (CandleStyle/MAStyle/MACDStyle/...) vô ích —
+  // cộng dồn theo tần suất tick, góp phần vào jank khi live feed chạy nhanh.
+  KChartColors? _cachedDemoColors;
+  bool? _cachedDemoColorsIsDark;
+  CandleBodyStyle? _cachedDemoColorsBodyStyle;
 
   // Gesture priority cho chart vs outer scroll
   // true sau khi user drag dọc vùng phải chart (scaleY) — kích hoạt chart focused mode
@@ -208,78 +219,34 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
     }
   }
 
+  /// Shell (Scaffold/AppBar/body routing) — CHỈ rebuild theo `isDark`/
+  /// `showDepth`/`data.isEmpty`/`error`, KHÔNG theo `livePrice`/`orderBook`/
+  /// `data` nội dung/mọi field khác. Trước đây 1 `BlocBuilder` DUY NHẤT bọc
+  /// cả trang: mỗi tick `livePrice` (đã coalesce ~150ms, xem `_queueLivePrice`
+  /// trong `ChartBloc`) hay mỗi lần order book cập nhật (~200ms) đều ép
+  /// rebuild LẠI TOÀN BỘ Scaffold — kể cả `AppBar`/hàng chip timeframe/toàn
+  /// bộ khối "Main Indicator"+"Secondary Indicator" (~30 chip)/danh sách
+  /// Order Book (tới 31 row) dù các phần đó không hề đổi nội dung. Tách
+  /// thành 4 vùng `BlocBuilder` riêng theo field thực sự dùng (§ dưới đây) —
+  /// mỗi tick giờ chỉ rebuild đúng vùng cần: tick giá → chart region + order
+  /// book region (không đụng controls/AppBar phần còn lại); toggle chip
+  /// indicator → chỉ controls region.
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<ChartBloc, ChartState>(
-      builder: (context, state) {
+      buildWhen: (prev, curr) =>
+          prev.isDark != curr.isDark ||
+          prev.showDepth != curr.showDepth ||
+          prev.data.isEmpty != curr.data.isEmpty ||
+          prev.error != curr.error,
+      builder: (context, shellState) {
         return Scaffold(
-          backgroundColor: state.isDark
-              ? const Color(0xFF1C1C1E)
+          backgroundColor: shellState.isDark
+              ? const Color(0xFF0B0E11)
               : Colors.white,
-          appBar: AppBar(
-            backgroundColor: state.isDark
-                ? const Color(0xFF1C1C1E)
-                : Colors.white,
-            elevation: 0,
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  MarketEnv.symbol,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: state.isDark ? Colors.white : Colors.black,
-                  ),
-                ),
-                if (state.data.isNotEmpty)
-                  Text(
-                    // Ưu tiên giá tick WS (thumb/kline) — cùng nguồn với
-                    // đường now-price trên chart.
-                    '${(state.livePrice ?? state.data.last.close).toStringAsFixed(2)} USDT',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color:
-                          (state.livePrice ?? state.data.last.close) >=
-                              state.data.last.open
-                          ? const Color(0xFF14AD8F)
-                          : const Color(0xFFD5405D),
-                    ),
-                  ),
-              ],
-            ),
-            actions: [
-              Row(
-                children: [
-                  Text(
-                    'Depth',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: state.isDark ? Colors.white70 : Colors.black54,
-                    ),
-                  ),
-                  Switch(
-                    value: state.showDepth,
-                    onChanged: (v) => context.read<ChartBloc>().add(
-                      ChartDepthVisibilityChanged(v),
-                    ),
-                  ),
-                ],
-              ),
-              IconButton(
-                icon: Icon(
-                  state.isDark
-                      ? Icons.light_mode_outlined
-                      : Icons.dark_mode_outlined,
-                  color: state.isDark ? Colors.white70 : Colors.black54,
-                ),
-                onPressed: () =>
-                    context.read<ChartBloc>().add(const ChartThemeToggled()),
-              ),
-            ],
-          ),
-          body: state.data.isEmpty
-              ? _buildEmptyBody(context, state)
+          appBar: _buildAppBar(context, shellState),
+          body: shellState.data.isEmpty
+              ? _buildEmptyBody(context, shellState)
               : SingleChildScrollView(
                   controller: _outerScrollController,
                   physics: (_scaleYActive && _pointerOnChart)
@@ -288,19 +255,151 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      state.showDepth
-                          ? _buildDepthChartSection(context, state)
-                          : _buildChart(context, state),
+                      _buildChartRegion(context),
                       const SizedBox(height: 8),
-                      _buildControls(context, state),
+                      _buildControlsRegion(context),
                       const SizedBox(height: 8),
-                      _sectionHeader('Order Book', state),
-                      _buildOrderBook(state),
+                      _buildOrderBookRegion(context),
                     ],
                   ),
                 ),
         );
       },
+    );
+  }
+
+  /// `shellState` chỉ dùng cho `isDark`/`showDepth` (đã có trong buildWhen
+  /// của shell — luôn mới) — dòng giá riêng đọc `livePrice`/`data` qua
+  /// `BlocBuilder` con của chính nó, không kéo AppBar rebuild theo tick giá.
+  PreferredSizeWidget _buildAppBar(
+    BuildContext context,
+    ChartState shellState,
+  ) {
+    return AppBar(
+      backgroundColor: shellState.isDark
+          ? const Color(0xFF0B0E11)
+          : Colors.white,
+      elevation: 0,
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            MarketEnv.symbol,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: shellState.isDark ? Colors.white : Colors.black,
+            ),
+          ),
+          _buildPriceTicker(),
+        ],
+      ),
+      actions: [
+        Row(
+          children: [
+            Text(
+              'Depth',
+              style: TextStyle(
+                fontSize: 12,
+                color: shellState.isDark ? Colors.white70 : Colors.black54,
+              ),
+            ),
+            Switch(
+              value: shellState.showDepth,
+              onChanged: (v) =>
+                  context.read<ChartBloc>().add(ChartDepthVisibilityChanged(v)),
+            ),
+          ],
+        ),
+        IconButton(
+          icon: Icon(
+            shellState.isDark
+                ? Icons.light_mode_outlined
+                : Icons.dark_mode_outlined,
+            color: shellState.isDark ? Colors.white70 : Colors.black54,
+          ),
+          onPressed: () =>
+              context.read<ChartBloc>().add(const ChartThemeToggled()),
+        ),
+      ],
+    );
+  }
+
+  /// Dòng giá dưới symbol trong AppBar — vùng DUY NHẤT của AppBar thực sự
+  /// cần rebuild theo `livePrice`/tick WS (~150ms sau coalesce).
+  Widget _buildPriceTicker() {
+    return BlocBuilder<ChartBloc, ChartState>(
+      buildWhen: (prev, curr) =>
+          prev.livePrice != curr.livePrice || prev.data != curr.data,
+      builder: (context, state) {
+        if (state.data.isEmpty) return const SizedBox.shrink();
+        // Ưu tiên giá tick WS (thumb/kline) — cùng nguồn với đường now-price
+        // trên chart.
+        final price = state.livePrice ?? state.data.last.close;
+        return Text(
+          '${price.toStringAsFixed(2)} USDT',
+          style: TextStyle(
+            fontSize: 13,
+            color: price >= state.data.last.open
+                ? const Color(0xFF0ECB81)
+                : const Color(0xFFF6465D),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Chart chính hoặc depth chart — dùng gần như MỌI field của `ChartState`
+  /// (`candleBodyStyle`/`data`/`hasMoreHistory`/`isFetching`/`isLine`/
+  /// `livePrice`/`savedChartScale`/`timeframe`/`volHidden`/`mainTypes`/
+  /// `secondaryTypes`/`depthBottomLabelCount`/`isLive`/`orderBook`/
+  /// `showDepth` — xem `_buildChart`/`_buildDepthChartSection`) nên KHÔNG
+  /// giới hạn `buildWhen` thêm (chỉ tách ra khỏi controls/order-book-list
+  /// region — 2 vùng vốn KHÔNG cần các field trên).
+  Widget _buildChartRegion(BuildContext context) {
+    return BlocBuilder<ChartBloc, ChartState>(
+      builder: (context, state) => state.showDepth
+          ? _buildDepthChartSection(context, state)
+          : _buildChart(context, state),
+    );
+  }
+
+  /// Khối chip "Candle/Line/Volume/Bid-Ask/Live" + zoom + "Main Indicator"/
+  /// "Secondary Indicator" (~30 chip) — chỉ đọc `isDark`/`isLine`/
+  /// `volHidden`/`showBidAsk`/`isLive`/`mainTypes`/`secondaryTypes` (xem
+  /// `_buildControls`), KHÔNG đọc `livePrice`/`orderBook`/`data` — trước đây
+  /// vẫn rebuild theo tick giá dù không hiển thị gì liên quan.
+  Widget _buildControlsRegion(BuildContext context) {
+    return BlocBuilder<ChartBloc, ChartState>(
+      buildWhen: (prev, curr) =>
+          prev.isDark != curr.isDark ||
+          prev.isLine != curr.isLine ||
+          prev.volHidden != curr.volHidden ||
+          prev.showBidAsk != curr.showBidAsk ||
+          prev.isLive != curr.isLive ||
+          !_setEquals(prev.mainTypes, curr.mainTypes) ||
+          !_setEquals(prev.secondaryTypes, curr.secondaryTypes),
+      builder: (context, state) => _buildControls(context, state),
+    );
+  }
+
+  /// Header + list "Order Book" — chỉ đọc `orderBook`/`livePrice`/`data`
+  /// (cho `data.last.open`/`close`)/`isDark`/`isLive` (xem `_buildOrderBook`),
+  /// KHÔNG đọc `timeframe`/`candleBodyStyle`/`savedChartScale`/`mainTypes`/
+  /// `secondaryTypes`/... — trước đây vẫn rebuild lại tới 31 row mỗi khi
+  /// đổi timeframe/toggle indicator dù order book không đổi gì.
+  Widget _buildOrderBookRegion(BuildContext context) {
+    return BlocBuilder<ChartBloc, ChartState>(
+      buildWhen: (prev, curr) =>
+          prev.orderBook != curr.orderBook ||
+          prev.livePrice != curr.livePrice ||
+          prev.data != curr.data ||
+          prev.isDark != curr.isDark ||
+          prev.isLive != curr.isLive,
+      builder: (context, state) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [_sectionHeader('Order Book', state), _buildOrderBook(state)],
+      ),
     );
   }
 
@@ -368,8 +467,8 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
   }
 
   Widget _buildOrderBook(ChartState state) {
-    final upColor = const Color(0xFF14AD8F);
-    final dnColor = const Color(0xFFD5405D);
+    final upColor = const Color(0xFF0ECB81);
+    final dnColor = const Color(0xFFF6465D);
     final textColor = state.isDark ? Colors.white70 : Colors.black87;
     final mutedColor = state.isDark ? Colors.white38 : Colors.black38;
 
@@ -588,41 +687,60 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
         AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           height: state.isFetching ? 28 : 0,
-          color: const Color(0xFF217AFF),
+          color: const Color(0xFFF0B90B),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const SizedBox(
-                width: 12,
-                height: 12,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(width: 8),
               Text(
                 'Đang tải thêm ${ChartState.loadMoreBatchSize} nến...',
-                style: const TextStyle(color: Colors.white, fontSize: 12),
+                style: const TextStyle(color: Colors.black, fontSize: 12),
               ),
             ],
           ),
         ),
-        // Timeframe + scale đã lưu
+        // Timeframe + scale đã lưu — cuộn ngang: 7 khung (1m..1D) không đủ
+        // chỗ trong 1 Row cố định trên màn hình hẹp (RenderFlex overflow).
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+          padding: const EdgeInsets.fromLTRB(12, 4, 0, 0),
           child: Row(
             children: [
-              for (final tf in ChartTimeframe.values) ...[
-                _chip(
-                  tf.label,
-                  state.timeframe == tf,
-                  state.isDark,
-                  () =>
-                      context.read<ChartBloc>().add(ChartTimeframeChanged(tf)),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Row(
+                    children: [
+                      for (final tf in ChartTimeframe.values) ...[
+                        _chip(
+                          tf.label,
+                          state.timeframe == tf,
+                          state.isDark,
+                          () => context.read<ChartBloc>().add(
+                            ChartTimeframeChanged(tf),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                    ],
+                  ),
                 ),
-                const SizedBox(width: 6),
-              ],
+              ),
+              GestureDetector(
+                onTap: () => _showSettingsSheet(context, state),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  child: Text(
+                    'setting',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: state.isDark ? Colors.white60 : Colors.black54,
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -655,7 +773,7 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: _scaleYActive
-                      ? const Color(0xFF217AFF).withValues(alpha: 0.15)
+                      ? const Color(0xFFF0B90B).withValues(alpha: 0.15)
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(4),
                 ),
@@ -665,7 +783,7 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
                     color: _scaleYActive
-                        ? const Color(0xFF217AFF)
+                        ? const Color(0xFFF0B90B)
                         : (state.isDark ? Colors.white38 : Colors.black38),
                   ),
                 ),
@@ -690,149 +808,142 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
     );
   }
 
-  /// Palette "random" để demo CandleStyle/VolumeStyle/indicator style mới —
-  /// cố tình chọn màu chói, khác hẳn default để thấy rõ sự khác biệt.
-  /// bg/text/grid vẫn lấy từ `state.colors` (theo dark/light mode thật),
-  /// chỉ đổi màu vẽ (nến/volume/indicator).
+  /// Palette kiểu Binance: xanh #0ECB81 / đỏ #F6465D cho up/down, vàng
+  /// #F0B90B làm màu nhấn chính (đường giá, MA1, RSI...), teal #35CDAC và
+  /// tím #B48EE3 làm màu phụ cho các đường thứ 2/3 — cùng bộ tông đã dùng
+  /// làm default trong lib/. bg/text/grid vẫn lấy từ `state.colors` (theo
+  /// dark/light mode thật), chỉ đổi màu vẽ (nến/volume/indicator).
   KChartColors _demoColors(ChartState state) {
-    return state.colors.copyWith(
-      livePriceStyle: const LivePriceStyle(
-        upColor: Colors.blueAccent,
-        dnColor: Colors.red,
-        textStyle: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          color: Colors.white,
-        ),
+    // Cache hit — isDark/candleBodyStyle chưa đổi từ lần gọi trước, kết quả
+    // (thuần theo 2 field này) vẫn còn đúng, khỏi dựng lại ~20 style object.
+    final cached = _cachedDemoColors;
+    if (cached != null &&
+        _cachedDemoColorsIsDark == state.isDark &&
+        _cachedDemoColorsBodyStyle == state.candleBodyStyle) {
+      return cached;
+    }
+
+    const upColor = Color(0xFF0ECB81);
+    const dnColor = Color(0xFFF6465D);
+    const accentColor = Color(0xFFF0B90B);
+    const tealColor = Color(0xFF35CDAC);
+    const purpleColor = Color(0xFFB48EE3);
+    final textColor = state.isDark
+        ? const Color(0xFFEAECEF)
+        : const Color(0xFF1E2329);
+    final textStyle = TextStyle(color: textColor);
+
+    final result = state.colors.copyWith(
+      livePriceStyle: LivePriceStyle(
+        upColor: upColor,
+        dnColor: dnColor,
+        textStyle: const TextStyle(fontSize: 10, color: Colors.white),
       ),
-      candleStyle: const CandleStyle(
-        upColor: Color(0xFF00E5FF),
-        dnColor: Color(0xFFFF3D00),
-        kLineColor: Color(0xFFAA00FF),
-        kLineFillColors: [Color(0x80AA00FF), Color(0x00AA00FF)],
-        textStyle: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w100,
-          color: Colors.black,
-        ),
+      candleStyle: CandleStyle(
+        upColor: upColor,
+        dnColor: dnColor,
+        kLineColor: accentColor,
+        kLineFillColors: const [Color(0x33F0B90B), Color(0x00F0B90B)],
+        textStyle: TextStyle(fontSize: 10, color: textColor),
+        bodyStyle: state.candleBodyStyle,
       ),
-      volumeStyle: const VolumeStyle(
-        upColor: Color(0xFF76FF03),
-        dnColor: Color(0xFFFF1744),
-        ma5Color: Color(0xFFFFEA00),
-        ma10Color: Color(0xFFFF6D00),
+      volumeStyle: VolumeStyle(
+        upColor: upColor,
+        dnColor: dnColor,
+        ma5Color: accentColor,
+        ma10Color: purpleColor,
         // forceColor bảo vệ ma5Color/ma10Color — chỉ "VOL:" prefix đổi màu.
-        textStyle: TextStyle(
-          fontSize: 11,
-          fontStyle: FontStyle.italic,
-          color: Colors.red,
-        ),
+        textStyle: TextStyle(fontSize: 10, color: textColor),
       ),
-      // Mọi indicator dưới đây: textStyle.color = trắng đồng nhất — chỉ áp
-      // cho prefix/label chung (vd "KDJ(9,1,3) "); các màu riêng từng giá trị
-      // (kColor/dColor/macdColor/...) LUÔN giữ nguyên nhờ forceColor, không
-      // bị textStyle.color đè — xem indicator_template.dart getTextStyle().
-      avlStyle: const AVLStyle(
-        avlColor: Color(0xFFEA80FC), // hồng tím
-        textStyle: TextStyle(color: Colors.white),
+      // Mọi indicator dưới đây: textStyle.color = textColor đồng nhất — chỉ
+      // áp cho prefix/label chung (vd "KDJ(9,1,3) "); các màu riêng từng giá
+      // trị (kColor/dColor/macdColor/...) LUÔN giữ nguyên nhờ forceColor,
+      // không bị textStyle.color đè — xem indicator_template.dart getTextStyle().
+      avlStyle: AVLStyle(avlColor: accentColor, textStyle: textStyle),
+      maStyle: MAStyle(
+        maColors: const [accentColor, tealColor, purpleColor, dnColor],
+        textStyle: textStyle,
       ),
-      maStyle: const MAStyle(
-        maColors: [
-          Color(0xFFFFAB00),
-          Color(0xFF00B8D4),
-          Color(0xFFD500F9),
-          Color(0xFF64DD17),
-        ],
-        textStyle: TextStyle(color: Colors.white),
+      emaStyle: MAStyle(
+        maColors: const [accentColor, tealColor, purpleColor],
+        textStyle: textStyle,
       ),
-      emaStyle: const MAStyle(
-        maColors: [Color(0xFF00E5FF), Color(0xFFFF4081), Color(0xFFFFEB3B)],
-        textStyle: TextStyle(color: Colors.red),
+      bollStyle: BOLLStyle(
+        bollColor: accentColor,
+        ubColor: tealColor,
+        lbColor: purpleColor,
+        textStyle: textStyle,
       ),
-      bollStyle: const BOLLStyle(
-        bollColor: Color(0xFF6200EA),
-        ubColor: Color(0xFF00BFA5),
-        lbColor: Color(0xFFFF6D00),
-        textStyle: TextStyle(color: Colors.white),
+      sarStyle: SARStyle(
+        upColor: upColor,
+        dnColor: dnColor,
+        textStyle: textStyle,
       ),
-      sarStyle: const SARStyle(
-        upColor: Color(0xFF00BFA5),
-        dnColor: Color(0xFFFF5252),
-        textStyle: TextStyle(color: Colors.black),
+      zigzagStyle: ZigZagStyle(zigzagColor: accentColor, textStyle: textStyle),
+      superTrendStyle: SuperTrendStyle(
+        upColor: upColor,
+        dnColor: dnColor,
+        textStyle: textStyle,
       ),
-      zigzagStyle: const ZigZagStyle(
-        zigzagColor: Color(0xFFFF6E40),
-        textStyle: TextStyle(color: Colors.white),
+      rsiStyle: RSIStyle(rsiColor: accentColor, textStyle: textStyle),
+      macdStyle: MACDStyle(
+        macdColor: accentColor,
+        difColor: tealColor,
+        deaColor: purpleColor,
+        textStyle: textStyle,
       ),
-      superTrendStyle: const SuperTrendStyle(
-        upColor: Color(0xFF00E676),
-        dnColor: Color(0xFFFF1744),
-        textStyle: TextStyle(color: Colors.white),
+      kdjStyle: KDJStyle(
+        kColor: accentColor,
+        dColor: tealColor,
+        jColor: purpleColor,
+        textStyle: textStyle,
       ),
-      rsiStyle: const RSIStyle(
-        rsiColor: Color(0xFFFF4081),
-        textStyle: TextStyle(color: Colors.green),
+      wrStyle: WRStyle(wrColor: accentColor, textStyle: textStyle),
+      cciStyle: CCIStyle(cciColor: tealColor, textStyle: textStyle),
+      obvStyle: OBVStyle(
+        obvColor: accentColor,
+        signalColor: purpleColor,
+        textStyle: textStyle,
       ),
-      macdStyle: const MACDStyle(
-        macdColor: Color(0xFF00E676),
-        difColor: Color(0xFFFFD600),
-        deaColor: Color(0xFF2979FF),
-        textStyle: TextStyle(color: Colors.white),
+      trixStyle: TRIXStyle(
+        trixColor: accentColor,
+        trixMaColor: tealColor,
+        textStyle: textStyle,
       ),
-      kdjStyle: const KDJStyle(
-        kColor: Color(0xFFFFD600),
-        dColor: Color(0xFF00E5FF),
-        jColor: Color(0xFFD500F9),
-        textStyle: TextStyle(color: Colors.white),
+      mtmStyle: MTMStyle(
+        mtmColor: accentColor,
+        mtmMaColor: tealColor,
+        textStyle: textStyle,
       ),
-      wrStyle: const WRStyle(
-        wrColor: Color(0xFF64DD17),
-        textStyle: TextStyle(color: Colors.white),
+      stochRsiStyle: StochRSIStyle(
+        kColor: accentColor,
+        dColor: tealColor,
+        textStyle: textStyle,
       ),
-      cciStyle: const CCIStyle(
-        cciColor: Color(0xFFFF6D00),
-        textStyle: TextStyle(color: Colors.white),
+      brarStyle: BRARStyle(
+        arColor: accentColor,
+        brColor: tealColor,
+        textStyle: textStyle,
       ),
-      obvStyle: const OBVStyle(
-        obvColor: Color(0xFF2979FF),
-        signalColor: Color(0xFFFF4081),
-        textStyle: TextStyle(color: Colors.white),
+      biasStyle: BIASStyle(
+        biasColors: const [accentColor, tealColor, purpleColor],
+        textStyle: textStyle,
       ),
-      trixStyle: const TRIXStyle(
-        trixColor: Color(0xFF00E5FF),
-        trixMaColor: Color(0xFFFFAB00),
-        textStyle: TextStyle(color: Colors.white),
+      psyStyle: PSYStyle(
+        psyColor: accentColor,
+        maPsyColor: tealColor,
+        textStyle: textStyle,
       ),
-      mtmStyle: const MTMStyle(
-        mtmColor: Color(0xFFD500F9),
-        mtmMaColor: Color(0xFF76FF03),
-        textStyle: TextStyle(color: Colors.white),
-      ),
-      stochRsiStyle: const StochRSIStyle(
-        kColor: Color(0xFFFF3D00),
-        dColor: Color(0xFF00BFA5),
-        textStyle: TextStyle(color: Colors.green),
-      ),
-      brarStyle: const BRARStyle(
-        arColor: Color(0xFFFFD600),
-        brColor: Color(0xFF00E5FF),
-        textStyle: TextStyle(color: Colors.red),
-      ),
-      biasStyle: const BIASStyle(
-        biasColors: [Color(0xFFFFC107), Color(0xFF00E676), Color(0xFFFF4081)],
-        textStyle: TextStyle(color: Colors.black),
-      ),
-      psyStyle: const PSYStyle(
-        psyColor: Color(0xFF00E5FF),
-        maPsyColor: Color(0xFFFF6D00),
-        textStyle: TextStyle(color: Colors.white),
-      ),
-      atrStyle: const ATRStyle(
-        atrColor: Color(0xFFFF9800),
-        atrMaColor: Color(0xFF00BCD4),
-        textStyle: TextStyle(color: Colors.white),
+      atrStyle: ATRStyle(
+        atrColor: accentColor,
+        atrMaColor: tealColor,
+        textStyle: textStyle,
       ),
     );
+    _cachedDemoColors = result;
+    _cachedDemoColorsIsDark = state.isDark;
+    _cachedDemoColorsBodyStyle = state.candleBodyStyle;
+    return result;
   }
 
   Widget _buildKChart(BuildContext context, ChartState state) {
@@ -851,12 +962,30 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
       onChartScaleChanged: (scale) =>
           context.read<ChartBloc>().add(ChartScaleSaved(scale)),
       livePrice: state.livePrice,
+      // Best bid/best ask — bids sort giảm dần (giá cao trước), asks sort
+      // tăng dần (giá thấp trước) nên .first của mỗi bên đúng là mức giá SÁT
+      // spread nhất (xem OrderBookMergeService._sortDesc/_sortAsc).
+      //
+      // Chỉ tính khi `showBidAsk` bật (xem doc `ChartState.showBidAsk`) —
+      // TRUYỀN THẲNG `null` khi tắt, không phải "tính rồi ẩn UI": orderBook
+      // vẫn cập nhật tần suất cao qua WS bất kể toggle, nhưng nếu luôn tính
+      // + truyền `bidPrice`/`askPrice` thật thì MỌI tick order book đều làm
+      // `ChartPainter.shouldRepaint` trả `true` → full repaint tốn kém dù
+      // box không hề hiển thị. Giữ `null` khi tắt để `shouldRepaint` so
+      // `null == null`, không trigger gì từ nguồn tick này.
+      bidPrice: state.showBidAsk
+          ? state.orderBook?.bids.firstOrNull?.price.toDouble()
+          : null,
+      askPrice: state.showBidAsk
+          ? state.orderBook?.asks.firstOrNull?.price.toDouble()
+          : null,
       showNowPrice: true,
       showInfoDialog: true,
       mBaseHeight: 280,
-      timeFormat: state.timeframe == ChartTimeframe.d1
-          ? TimeFormat.yearMonthDay
-          : TimeFormat.yearMonthDayWithHour,
+      // `timeFormat` để mặc định (null) — lib tự suy format cố định đúng
+      // khung thời gian đang chọn từ khoảng cách data (xem
+      // `BaseChartPainter.initFormats`), không cần tự tính ở tầng app nữa
+      // (trước đây làm qua `ChartTimeframe.axisTimeFormat`, đã bỏ).
       onLoadMore: (isLeft) =>
           context.read<ChartBloc>().add(ChartMoreDataRequested(isLeft)),
       isLoadingMore: state.isFetching,
@@ -969,11 +1098,11 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
 
   Widget _buildInfoCard(KLineEntity entity, bool isDark) {
     final isUp = entity.close >= entity.open;
-    final color = isUp ? const Color(0xFF14AD8F) : const Color(0xFFD5405D);
+    final color = isUp ? const Color(0xFF0ECB81) : const Color(0xFFF6465D);
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
+        color: isDark ? const Color(0xFF1E2329) : Colors.white,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: color.withValues(alpha: 0.4)),
         boxShadow: [
@@ -1032,37 +1161,60 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Row 1: chart type + zoom controls
+          // Chip "Live" phình rộng hơn (thêm dot nhấp nháy + text) khi
+          // `state.isLive == true` — cộng với 3 chip còn lại + 3 icon zoom
+          // cố định, đủ tràn ngang trên màn hình hẹp (RenderFlex overflow).
+          // Bọc cụm chip trong `Expanded` + `SingleChildScrollView` ngang
+          // (cùng pattern hàng chip timeframe ở `_buildChart`) — cuộn được
+          // khi tràn thay vì overflow, 3 icon zoom giữ cố định bên phải.
           Row(
             children: [
-              _chip(
-                'Candle',
-                !state.isLine,
-                state.isDark,
-                () => context.read<ChartBloc>().add(
-                  const ChartLineModeChanged(false),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _chip(
+                        'Candle',
+                        !state.isLine,
+                        state.isDark,
+                        () => context.read<ChartBloc>().add(
+                          const ChartLineModeChanged(false),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      _chip(
+                        'Line',
+                        state.isLine,
+                        state.isDark,
+                        () => context.read<ChartBloc>().add(
+                          const ChartLineModeChanged(true),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      _chip(
+                        'Volume',
+                        !state.volHidden,
+                        state.isDark,
+                        () => context.read<ChartBloc>().add(
+                          const ChartVolumeVisibilityToggled(),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      _chip(
+                        'Bid/Ask',
+                        state.showBidAsk,
+                        state.isDark,
+                        () => context.read<ChartBloc>().add(
+                          const ChartBidAskVisibilityToggled(),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      _liveChip(context, state),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(width: 6),
-              _chip(
-                'Line',
-                state.isLine,
-                state.isDark,
-                () => context.read<ChartBloc>().add(
-                  const ChartLineModeChanged(true),
-                ),
-              ),
-              const SizedBox(width: 6),
-              _chip(
-                'Volume',
-                !state.volHidden,
-                state.isDark,
-                () => context.read<ChartBloc>().add(
-                  const ChartVolumeVisibilityToggled(),
-                ),
-              ),
-              const SizedBox(width: 6),
-              _liveChip(context, state),
-              const Spacer(),
               _iconBtn(
                 Icons.zoom_in,
                 () => _controller.zoomIn(),
@@ -1312,6 +1464,214 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
     );
   }
 
+  // Bọc BlocBuilder riêng cho sheet (thay vì dùng thẳng `state` chụp tại lúc
+  // mở) để chọn kiểu nến cập nhật tick chọn ngay trong sheet mà không cần
+  // đóng/mở lại.
+  void _showSettingsSheet(BuildContext context, ChartState outerState) {
+    final bloc = context.read<ChartBloc>();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true, // cho phép sheet cao hơn nửa màn hình mặc định
+      backgroundColor: outerState.isDark
+          ? const Color(0xFF1E2329)
+          : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        return BlocProvider.value(
+          value: bloc,
+          child: BlocBuilder<ChartBloc, ChartState>(
+            builder: (context, state) {
+              return SafeArea(
+                // Panel preview 200px của item chọn có thể đẩy tổng chiều
+                // cao vượt màn hình (nhất là landscape/màn nhỏ) — bọc scroll
+                // để cuộn thay vì overflow, KHÔNG bỏ Column min vì sheet vẫn
+                // phải co theo nội dung khi ngắn.
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 36,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: state.isDark
+                                ? Colors.white24
+                                : Colors.black12,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                      Text(
+                        'Settings',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: state.isDark ? Colors.white : Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Kiểu K-line',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: state.isDark ? Colors.white60 : Colors.black54,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      for (final opt in _candleStyleOptions(state, bloc))
+                        _candleStyleRow(
+                          label: opt.label,
+                          selected: opt.selected,
+                          isDark: state.isDark,
+                          onTap: opt.onTap,
+                          preview: opt.preview,
+                        ),
+                      const SizedBox(height: 6),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.of(sheetContext).pop(),
+                          child: const Text('Đóng'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  /// 5 lựa chọn "Kiểu K-line" theo đúng thứ tự/label ảnh mẫu: 4 kiểu nến +
+  /// 1 line chart. `selected` của 4 kiểu nến luôn kèm `!state.isLine` — line
+  /// chart không có "thân nến" nên không được coi là khớp `candleBodyStyle`.
+  /// Chọn 1 trong 4 kiểu nến cũng tắt `isLine` (phòng trường hợp đang ở line
+  /// chart); chọn "Đường" chỉ bật `isLine`, giữ nguyên `candleBodyStyle` cũ.
+  List<({String label, bool selected, VoidCallback onTap, Widget preview})>
+  _candleStyleOptions(ChartState state, ChartBloc bloc) {
+    void selectCandle(CandleBodyStyle style) {
+      bloc.add(const ChartLineModeChanged(false));
+      bloc.add(ChartCandleBodyStyleChanged(style));
+    }
+
+    bool isCandle(CandleBodyStyle style) =>
+        !state.isLine && state.candleBodyStyle == style;
+
+    return [
+      (
+        label: 'Solid',
+        selected: isCandle(CandleBodyStyle.solid),
+        onTap: () => selectCandle(CandleBodyStyle.solid),
+        preview: const CandleStylePreview.candle(
+          bodyStyle: CandleBodyStyle.solid,
+        ),
+      ),
+      (
+        label: 'Hollow',
+        selected: isCandle(CandleBodyStyle.hollow),
+        onTap: () => selectCandle(CandleBodyStyle.hollow),
+        preview: const CandleStylePreview.candle(
+          bodyStyle: CandleBodyStyle.hollow,
+        ),
+      ),
+      (
+        label: 'Hollow tăng',
+        selected: isCandle(CandleBodyStyle.hollowUp),
+        onTap: () => selectCandle(CandleBodyStyle.hollowUp),
+        preview: const CandleStylePreview.candle(
+          bodyStyle: CandleBodyStyle.hollowUp,
+        ),
+      ),
+      (
+        label: 'Hollow giảm',
+        selected: isCandle(CandleBodyStyle.hollowDown),
+        onTap: () => selectCandle(CandleBodyStyle.hollowDown),
+        preview: const CandleStylePreview.candle(
+          bodyStyle: CandleBodyStyle.hollowDown,
+        ),
+      ),
+      (
+        label: 'Đường',
+        selected: state.isLine,
+        onTap: () => bloc.add(const ChartLineModeChanged(true)),
+        preview: const CandleStylePreview.line(),
+      ),
+    ];
+  }
+
+  /// 1 card trong list "Kiểu K-line" — LUÔN hiện đủ (không thu gọn vào
+  /// dropdown), viền nổi bật khi đang chọn. Chỉ item đang chọn mới xổ ra
+  /// panel [preview] cao 160 ngay dưới label; item chưa chọn chỉ là 1 card
+  /// mỏng có label, giữ list gọn giống ảnh mẫu (không dùng radio icon —
+  /// chọn/không chọn thể hiện qua viền).
+  Widget _candleStyleRow({
+    required String label,
+    required bool selected,
+    required bool isDark,
+    required VoidCallback onTap,
+    required Widget preview,
+  }) {
+    final borderColor = selected
+        ? (isDark ? Colors.white : Colors.black87)
+        : (isDark ? Colors.white12 : Colors.black12);
+    final cardColor = isDark
+        ? const Color(0xFF1E2329)
+        : const Color(0xFFF2F3F5);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: borderColor, width: selected ? 2 : 1),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                color: textColor,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+            if (selected) ...[
+              const SizedBox(height: 10),
+              Container(
+                height: 160,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF181A20) : Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 12,
+                ),
+                child: preview,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _chip(String label, bool selected, bool isDark, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
@@ -1320,8 +1680,8 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
         decoration: BoxDecoration(
           color: selected
-              ? const Color(0xFF217AFF)
-              : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F3F5)),
+              ? const Color(0xFFF0B90B)
+              : (isDark ? const Color(0xFF1E2329) : const Color(0xFFF2F3F5)),
           borderRadius: BorderRadius.circular(20),
         ),
         child: Text(
@@ -1330,7 +1690,7 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
             fontSize: 12,
             fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
             color: selected
-                ? Colors.white
+                ? Colors.black
                 : (isDark ? Colors.white60 : Colors.black54),
           ),
         ),
@@ -1346,9 +1706,9 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: state.isLive
-              ? const Color(0xFFD5405D)
+              ? const Color(0xFFF6465D)
               : (state.isDark
-                    ? const Color(0xFF2C2C2E)
+                    ? const Color(0xFF1E2329)
                     : const Color(0xFFF2F3F5)),
           borderRadius: BorderRadius.circular(20),
         ),

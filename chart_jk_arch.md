@@ -1,164 +1,33 @@
 # k_chart_jk — Tài liệu tổng hợp
 
 > Tổng hợp từ: `HANDBOOK.md`, `chart_jk.md`, `chart_plush.md`, `CHANGELOG.md`, `chart_jk_arch.md`.
+>
+> **Changelog đã chuyển sang [`CHANGELOG.md`](CHANGELOG.md), tổ chức theo ngày.** File này chỉ còn kiến trúc/công thức/tài liệu API — không còn lịch sử thay đổi.
 
 ---
 
 ## Mục lục
 
-1. [Changelog](#1-changelog)
-2. [Tổng quan kiến trúc](#2-tổng-quan-kiến-trúc)
-3. [Cài đặt & Quick Start](#3-cài-đặt--quick-start)
-4. [Entry point & exports](#4-entry-point--exports)
-5. [Entity — data models](#5-entity--data-models)
-6. [KChartWidget — API đầy đủ](#6-kchartwidget--api-đầy-đủ)
-7. [KChartController](#7-kchartcontroller)
-8. [KChartStyle & KChartColors](#8-kchartstyle--kchartcolors)
-9. [Indicators — main & secondary](#9-indicators--main--secondary)
-10. [DataUtil & helpers](#10-datautil--helpers)
-11. [DepthChart — orderbook depth](#11-depthchart--orderbook-depth)
-12. [Renderer internals](#12-renderer-internals)
-13. [Gesture model](#13-gesture-model)
-14. [Recipes — công thức thường dùng](#14-recipes--công-thức-thường-dùng)
-    - [14.10 Real-time WebSocket price ticker](#1410-real-time-websocket-price-ticker)
-15. [Troubleshooting & pitfalls](#15-troubleshooting--pitfalls)
-16. [Phân tích cơ chế Y Grid & Anchor Zoom (MEXC / TradingView)](#16-phân-tích-cơ-chế-y-grid--anchor-zoom-mexc--tradingview)
+1. [Tổng quan kiến trúc](#1-tổng-quan-kiến-trúc)
+2. [Cài đặt & Quick Start](#2-cài-đặt--quick-start)
+3. [Entry point & exports](#3-entry-point--exports)
+4. [Entity — data models](#4-entity--data-models)
+5. [KChartWidget — API đầy đủ](#5-kchartwidget--api-đầy-đủ)
+6. [KChartController](#6-kchartcontroller)
+7. [KChartStyle & KChartColors](#7-kchartstyle--kchartcolors)
+8. [Indicators — main & secondary](#8-indicators--main--secondary)
+9. [DataUtil & helpers](#9-datautil--helpers)
+10. [DepthChart — orderbook depth](#10-depthchart--orderbook-depth)
+11. [Renderer internals](#11-renderer-internals)
+12. [Gesture model](#12-gesture-model)
+13. [Recipes — công thức thường dùng](#13-recipes--công-thức-thường-dùng)
+    - [13.10 Real-time WebSocket price ticker](#1310-real-time-websocket-price-ticker)
+14. [Troubleshooting & pitfalls](#14-troubleshooting--pitfalls)
+15. [Phân tích cơ chế Y Grid & Anchor Zoom (MEXC / TradingView)](#15-phân-tích-cơ-chế-y-grid--anchor-zoom-mexc--tradingview)
 
 ---
 
-## 1. Changelog
-
-### Unreleased
-
-- **feat (thêm lại sau revert):** `IchimokuIndicator` (Ichimoku Kinko Hyo) — main indicator, thêm lại theo yêu cầu sau khi đã revert hoàn toàn ở mục "revert" bên dưới (07-18). Lần này dựng lại từ đầu với cơ chế đơn giản hơn bản V2 cũ (1 property `futureShift` thay vì 3 hook `requiredFutureBars`/`getFutureMaxMinValue`/`drawFutureSegment`). Xem chi tiết công thức/API tại [9.2](#92-built-in-indicators) và cơ chế renderer dùng chung tại [12](#12-renderer-internals) mục "Vùng tương lai".
-  - `calcParams: [9, 26, 52]` (tenkanPeriod, kijunPeriod, spanBPeriod) — bộ cổ điển; `shift` LUÔN = `calcParams[1]` (kijun period), không hardcode `26`.
-  - 5 đường: Tenkan/Kijun (vẽ tại index gốc, không dịch), Senkou Span A/B (dịch **tới trước** `shift` nến), Chikou (dịch **lùi** `shift` nến, = `close`, không lưu field riêng). Mây (Kumo) tô giữa Span A/B, tách polygon tại điểm giao (nội suy tuyến tính) để đổi màu đúng đoạn tăng/giảm.
-  - **Khác biệt cốt lõi so với V1/V2 cũ**: Span A/B/Chikou vẫn lưu 1 giá trị/nến TẠI INDEX GỐC (giống mọi indicator khác) — phần dịch `±shift` chỉ là phép cộng/trừ `shift × pointWidth` vào toạ độ X **ngay tại draw-time** (`IchimokuIndicator.drawChart`), không lưu mảng đã dịch sẵn `spanA[n+shift]`, không kéo dài entity/mảng dữ liệu.
-  - `calc()` dùng sliding-window monotonic deque O(n) cho cả 3 chu kỳ HH/LL — không phải vòng lặp naive O(n×52).
-  - `MainIndicator.futureShift` (getter mới, mặc định `0`) — hook chung cho MỌI main indicator cần dịch trục, không riêng Ichimoku; `IchimokuIndicator.futureShift = shift`. Renderer tự tính `mFutureSlots = max(futureShift)` và mở rộng `mDataLen`/biên scroll theo đó — xem [12](#12-renderer-internals).
-  - **7 bug phát hiện qua `/code-review` (high effort, 8 finder angle) trên lần thêm lại này** — đã fix hết, đều xoay quanh việc renderer conflate "vùng cần quét để có đủ nến nguồn vẽ đường dịch" (rộng hơn viewport `mFutureSlots` mỗi phía) với "vùng nến đang thực sự hiển thị" (hẹp hơn): label max/min giá lệch vị trí/vô hình khi extreme nằm ngoài viewport; label chỉ số góc trên hiện sai nến khi cuộn giữa lịch sử; autoscale trục Y main/volume/secondary bị nến off-screen ảnh hưởng; field public `currentStartIndex` có thể vượt bound dữ liệu thật; `IchimokuIndicator.pointWidth` có nguy cơ lệch khỏi `KChartStyle.pointWidth` nếu class này từng cho phép subclass. Sửa bằng cách tách riêng `mVisibleStartIndex/mVisibleStopIndex` (hẹp, đúng viewport) khỏi `mRealStartIndex/mRealStopIndex` (rộng, chỉ dùng cho vẽ + Y-range của riêng indicator có dịch trục), clamp `currentStartIndex`, và đổi `KChartStyle` thành `final class`.
-    - File: `lib/entity/candle_entity.dart` (field `ichimoku`), `lib/indicator/indicator_style.dart` (`IchimokuStyle`), `lib/indicator/indicator_template.dart` (`part`, `futureShift` getter, switch case), `lib/indicator/main/ichimoku_indicator.dart` (mới), `lib/styles/k_chart_style.dart` (`ichimokuStyle` field/default/`copyWith`, `KChartStyle` → `final class`), `lib/renderer/base_chart_painter.dart` (`mFutureSlots`/`mVisibleStartIndex`/`mVisibleStopIndex`/`mRealStartIndex`/`mRealStopIndex`, `timeAt()`), `lib/renderer/chart_painter.dart`, `example/lib/bloc/chart_state.dart`, `example/lib/bloc/chart_bloc.dart`, `example/lib/main.dart` (chip)
-- **feat:** `PSYIndicator` (PSY) — secondary indicator mới, Psychological Line / 心理线. `calcParams: [12, 6]` (N: đếm phiên tăng, M: MA tín hiệu). `PSY = COUNT(close>prevClose,N)/N×100`; `MAPSY = MA(PSY,M)`. Cùng cấu trúc 2-đường-signal như MTM/TRIX. `PSY` cần `prevClose` nên bắt đầu trễ 1 nến (`i=N`, không phải `i=N-1`) — cùng loại trễ như `BR` của BRAR.
-  - File: `lib/entity/psy_entity.dart` (mới), `lib/entity/macd_entity.dart` + `lib/entity/k_entity.dart` (nối `PSYEntity` vào mixin chain, trước `MACDEntity`), `lib/indicator/indicator_style.dart` (`PSYStyle`), `lib/indicator/secondary/psy_indicator.dart` (mới), `lib/indicator/indicator_template.dart` (`part` + switch case), `lib/styles/k_chart_style.dart` (`psyStyle` field/default/`copyWith`), `example/lib/bloc/chart_state.dart`, `example/lib/bloc/chart_bloc.dart`, `example/lib/main.dart` (chip + `_demoColors`)
-- **feat:** `BIASIndicator` (BIAS) — secondary indicator mới, Bias Ratio / 乖离率. `calcParams: [6, 12, 24]` — nhiều chu kỳ cùng lúc (cùng pattern `MAStyle.maColors`/`getMAColor`, không giới hạn đúng 3). `BIAS(n) = (close - MA(close,n))/MA(close,n) × 100%`, rolling-sum O(n). Output `entity.biasValueList = List<double?>` dùng `double?` (không phải sentinel `0` như MA) vì BIAS hợp lệ đi qua 0 rất thường xuyên.
-  - File: `lib/entity/bias_entity.dart` (mới), `lib/entity/macd_entity.dart` + `lib/entity/k_entity.dart` (nối `BIASEntity` vào mixin chain, trước `MACDEntity`), `lib/indicator/indicator_style.dart` (`BIASStyle`), `lib/indicator/secondary/bias_indicator.dart` (mới), `lib/indicator/indicator_template.dart` (`part` + switch case), `lib/styles/k_chart_style.dart` (`biasStyle` field/default/`copyWith`), `example/lib/bloc/chart_state.dart`, `example/lib/bloc/chart_bloc.dart`, `example/lib/main.dart` (chip + `_demoColors`)
-- **feat:** `BRARIndicator` (BRAR) — secondary indicator mới, Popularity/Willingness Index (人气意愿指标). `calcParams: [26]`. `AR = Σ(high-open,26)/Σ(open-low,26)×100`, `BR = Σmax(0,high-prevClose,26)/Σmax(0,prevClose-low,26)×100`, tính bằng rolling-sum O(n), guard chia 0 → 0. Xem chi tiết công dụng/công thức tại [9.2](#92-built-in-indicators) và `indicator.md` (mới, ở root repo — tổng hợp công dụng + công thức toàn bộ 7 main + 12 secondary indicator, đọc trực tiếp từ `calc()` trong source).
-  - File: `lib/entity/brar_entity.dart` (mới), `lib/entity/macd_entity.dart` + `lib/entity/k_entity.dart` (nối `BRAREntity` vào mixin chain, trước `MACDEntity`), `lib/indicator/indicator_style.dart` (`BRARStyle`), `lib/indicator/secondary/brar_indicator.dart` (mới), `lib/indicator/indicator_template.dart` (`part` + switch case), `lib/styles/k_chart_style.dart` (`brarStyle` field/default/`copyWith`), `example/lib/bloc/chart_state.dart`, `example/lib/bloc/chart_bloc.dart`, `example/lib/main.dart` (chip + `_demoColors`)
-- **revert:** Ichimoku Cloud (main indicator, gồm cả V1 và V2 chiếu cloud ra tương lai) đã gỡ hoàn toàn khỏi codebase theo yêu cầu — không còn field/class/wiring nào sót lại, kể cả cơ chế chung `requiredFutureBars`/`getFutureMaxMinValue`/`drawFutureSegment` (hook no-op thêm vào `IndicatorTemplate`/`base_chart_painter.dart`/`main_renderer.dart` cho V2) cũng đã bị gỡ theo (đã rà lại toàn bộ `lib/` + `example/`, không còn tham chiếu nào). *(Cập nhật: thêm lại theo yêu cầu — xem bullet đầu Unreleased.)*
-- **fix:** KDJ `drawChart` dùng `||` thay `&&` trong guard null-check K/D/J rồi force-unwrap cả 2 điểm bằng `!` — nến mới chưa kịp `calc()` lại (vd tick live) có thể crash `Null check operator used on a null value`. Sửa: đổi sang `&&`, khớp pattern mọi secondary indicator khác (RSI/WR/MTM/TRIX/StochRSI).
-  - File: `lib/indicator/secondary/kdj_indicator.dart`
-- **fix:** `SARIndicator.drawChart` hard-code màu chấm SAR theo `candleStyle.upColor`/`dnColor`/`defaultTextColor` của MAIN CHART, bỏ qua hẳn `indicatorStyle` — set màu qua `KChartColors.sarStyle` không có tác dụng lên chấm vẽ, chỉ đổi được label `"SAR: ..."`. Sửa: `SARStyle` đổi field `sarColor` (1 màu) thành `upColor`/`dnColor` (theo convention `SuperTrendStyle`) — cả chấm lẫn label giờ tự chọn màu theo xu hướng (`sar <= (high+low)/2` = tăng → `upColor`, ngược lại → `dnColor`), độc lập với `candleStyle`.
-  - File: `lib/indicator/main/sar_indicator.dart`, `lib/indicator/indicator_style.dart`
-- **fix:** `LivePriceStyle.textStyle` không có guard fallback màu như 5 chỗ khác trong codebase — `textStyle` không tự set `color` sẽ ra chữ đen mặc định của `TextPainter`, gần như vô hình trên nền badge màu `upColor`/`dnColor`. Gom guard này (và 5 chỗ khác) vào 1 helper dùng chung `resolveTextStyle(base, fallback, {forceColor})`.
-  - File: `lib/renderer/chart_painter.dart`, `lib/utils/text_style_util.dart` (mới) — áp dụng luôn cho `vol_renderer.dart`, `secondary_renderer.dart`, `indicator_template.dart`, `depth_chart.dart`
-- **fix:** Alpha bị `.withAlpha()` ghi đè vô điều kiện thay vì nhân dồn — cùng lớp lỗi `VolRenderer` đã fix ở mục dưới, còn sót ở `MainRenderer` (`bgColor.withAlpha(80)` cho nền label indicator) và `SecondaryRenderer` (`defaultTextColor.withAlpha(90)` cho đường tham chiếu nét đứt). Sửa theo cùng pattern nhân dồn `color.withValues(alpha: color.a * factor)`.
-  - File: `lib/renderer/main_renderer.dart`, `lib/renderer/secondary_renderer.dart`
-- **refactor:** Thay cơ chế `identical(indicatorStyle, const XxxStyle())` (xem mục "16 field style indicator" bên dưới) bằng field `isDefaultStyle` tường minh — `identical()` không phân biệt được "caller không truyền `indicatorStyle`" với "caller chủ động truyền `const XxxStyle()` y hệt default" (Dart const-canonicalization khiến 2 trường hợp giống hệt nhau), nên trường hợp sau bị nhận nhầm là "chưa customize" và bị `KChartColors` ghi đè ngoài ý muốn. Sửa: constructor cả 16 indicator đổi `indicatorStyle` sang nhận `XxxStyle?` (nullable, mặc định `null`), field mới `isDefaultStyle = (indicatorStyle == null)` thay cho so sánh `identical()`.
-  - File: `lib/indicator/indicator_template.dart` + 16 file `lib/indicator/{main,secondary}/*.dart`
-- **refactor:** `getTextStyle`'s `forceColor` đổi từ positional bool (`getTextStyle(color, style, true)` — không tên, dễ chép sai khi copy giữa 16 file indicator gần giống nhau) sang named param (`getTextStyle(color, base: style, forceColor: true)`).
-  - File: `lib/indicator/indicator_template.dart` + ~30 call site trong `lib/indicator/{main,secondary}/*.dart`
-- **perf:** `LivePriceBadgePainter` cache `Paint`/`Path` thành `static` thay vì dựng mới (2 `Paint` + 1 `Path`) mỗi lần `paint()` — chạy mỗi frame theo tick giá live không throttle. `applyIndicatorColorStyles()` thêm cache theo `identical()` của bộ 3 tham số đầu vào, bỏ qua switch 16-case khi `mainIndicators`/`secondaryIndicators`/`chartColors` không đổi giữa 2 lần `ChartPainter` được dựng liên tiếp (rebuild do tick giá).
-  - File: `lib/styles/live_price_style.dart`, `lib/indicator/indicator_template.dart`
-- **fix:** `DepthChart.createState()` trả về kiểu private `_DepthChartState` trong API public (lint `library_private_types_in_public_api`) — đổi return type sang `State<DepthChart>` (public), đúng pattern đã áp dụng từ commit `c1d04f8` cho chính widget này trước đây (có lẽ bị lệch lại qua refactor sau này).
-  - File: `lib/depth_chart.dart`
-- **fix:** `textStyle.color` do người dùng tự set (vd `CandleStyle(textStyle: TextStyle(color: Colors.amber))`) bị **ghi đè vô điều kiện** ở 5 nơi — `getTextStyle()`/`getTextPainter()` luôn gọi `.copyWith(color: mauNguQuNghia)` (`defaultTextColor`/`crossTextColor`/`maxColor`/`indicatorStyle.xxxColor`/`annotationColor`...), nên set `color` trong `textStyle` không có tác dụng gì. Sửa: chỉ `copyWith(color: ...)` khi `textStyle.color == null` (chưa tự set); nếu đã set thì dùng nguyên `textStyle`, bỏ qua màu ngữ nghĩa truyền vào. Mặc định (không set `color`) hành vi giữ nguyên như cũ, không breaking.
-  - File: `lib/renderer/chart_painter.dart` (`candleStyle.textStyle`), `lib/renderer/vol_renderer.dart` (`volumeStyle.textStyle`), `lib/indicator/indicator_template.dart` (`indicatorStyle.textStyle`, dùng chung 16 indicator), `lib/depth_chart.dart` (`chartStyle.textStyle` + `annotationTextStyle`).
-- **refactor (breaking):** `KChartColors`/`KChartStyle` tái cấu trúc lại toàn bộ — gom màu/text theo khu vực thay vì field rời rạc, và cho phép cấu hình màu indicator từ 1 chỗ duy nhất. Xem chi tiết [8.2](#82-kchartcolors).
-  - **`CandleStyle`** (main chart) + **`VolumeStyle`** (panel volume) — 2 class mới trong `styles/k_chart_style.dart`, mỗi class tự chứa cả màu LẪN `textStyle` riêng (mặc định fontSize 10). Thay thế các field cũ: `kLineColor`, `kLineFillColors`, `upColor`, `dnColor` → `CandleStyle`; `ma5Color`, `ma10Color`, `volUpColor`, `volDnColor` → `VolumeStyle`.
-  - **Xoá `volColor`** — dead field, không có code nào đọc, không mang sang `VolumeStyle`.
-  - **16 field style indicator** thêm vào `KChartColors` (`maStyle`, `emaStyle`, `bollStyle`, `sarStyle`, `zigzagStyle`, `superTrendStyle`, `avlStyle`, `macdStyle`, `kdjStyle`, `rsiStyle`, `wrStyle`, `cciStyle`, `obvStyle`, `trixStyle`, `mtmStyle`, `stochRsiStyle`) — set màu toàn bộ indicator từ `KChartColors` thay vì phải tự tạo từng instance `AVLIndicator(indicatorStyle: ...)`.
-    - Cơ chế: `applyIndicatorColorStyles()` (`indicator/indicator_template.dart`) chạy 1 lần trong constructor `ChartPainter`, dùng `switch` theo runtime type để gán `colors.xxxStyle` vào `indicator.indicatorStyle` — **chỉ khi** instance đó còn dùng style mặc định. Instance nào tự truyền `indicatorStyle` riêng thì KHÔNG bị ghi đè. *(Cập nhật 07-17: phát hiện "còn default không" ban đầu dùng `identical()` với `const XxxStyle()`, sau đó thay bằng field `isDefaultStyle` tường minh — xem bullet đầu Unreleased.)*
-    - Kéo theo: `IndicatorTemplate.indicatorStyle` đổi từ `final` sang mutable field.
-    - Kéo theo: `indicator/indicator_style.dart` không còn là `part of 'indicator_template.dart'` nữa mà là file độc lập (`import`/`export`) — để `k_chart_style.dart` import thẳng các class `XxxStyle` mà không tạo vòng lặp import.
-  - Text style **không** còn nằm ở `KChartStyle` (`textStyle`/`volTextStyle` đã bị xoá khỏi đó) — dời hẳn vào `CandleStyle.textStyle`/`VolumeStyle.textStyle` để mỗi khu vực tự chứa đủ cả màu lẫn font trong 1 object.
-  - `example/lib/main.dart` (`_buildKChart`/`_demoColors`) và `example/lib/bloc/chart_bloc.dart` (`_initialState`) cập nhật theo API mới — state mặc định giờ bật sẵn TOÀN BỘ 6 main + 9 secondary indicator (trước chỉ MA + MACD) kèm palette màu riêng cho từng cái, để demo xem hết 1 lượt.
-  - Test `example/test/persistent_isolate_test.dart` phải sửa theo: vì default giờ bật sẵn mọi indicator, toggle trong test nghĩa là TẮT (trước đây default rỗng nên toggle nghĩa là BẬT) — assertion đổi từ `contains` sang `isNot(contains(...))`.
-- **fix:** 5 bug correctness phát hiện qua `/code-review` (high effort, 8 finder angle) trên refactor `KChartColors` ở trên — đã fix hết:
-  - `AVLIndicator`/`ZigZagIndicator` bake màu Paint 1 lần trong constructor từ `indicatorStyle`, không bao giờ đọc lại trong `drawChart` → set `avlStyle`/`zigzagStyle` qua `KChartColors` **không có tác dụng lên đường vẽ**, chỉ đổi được label text (đọc `indicatorStyle` live). Sửa: bỏ `..color = ...` khỏi constructor, gán lại `_linePaint..color = indicatorStyle.xxxColor` ngay trước mỗi lần vẽ.
-  - `BOLLIndicator._fillPaint` cùng lỗi — vùng tô mờ giữa 2 band không đổi màu theo `bollStyle.fillColor`, dù 3 đường band (đọc live) đã đúng.
-  - `applyIndicatorColorStyles()` dùng `identical(indicator.indicatorStyle, const XxxStyle())` để biết "còn default không" — sau lần gán đầu tiên, field không còn `identical` với default nữa nên mọi lần build sau (vd đổi theme runtime) không bao giờ áp lại màu mới cho indicator đó, nếu app giữ instance ổn định qua nhiều build. Sửa: thêm field `_originalIndicatorStyle` (`final`, snapshot chụp 1 lần lúc khởi tạo qua initializer list), so `identical()` với snapshot này thay vì giá trị `indicatorStyle` hiện tại (có thể đã bị chính cơ chế này ghi đè). *(Cập nhật 07-17: `identical()`-với-snapshot vẫn không phân biệt được caller truyền `const XxxStyle()` y hệt default — thay hẳn bằng field `isDefaultStyle` tường minh, xem bullet đầu Unreleased.)*
-  - `ChartPainter.drawVerticalText` tính chung 1 `textStyle` (từ `candleStyle.textStyle`) rồi truyền cho cả main lẫn volume renderer → `VolumeStyle.textStyle` không áp dụng cho label max/min trục phải của panel volume (chỉ áp cho header `VOL:/MA5:/MA10:`). Sửa: gọi riêng `mVolRenderer.getTextStyle(...)` cho nhánh volume.
-  - `IndicatorTemplate.getTextStyle` vẫn hard-code `fontSize: 10`, chưa nối với `candleStyle.textStyle` — label mọi indicator (RSI/MACD/KDJ/AVL/BOLL/SuperTrend/...) không đổi font theo `KChartColors` dù docs claim có. Sửa: `getTextStyle` nhận thêm param optional `base`, toàn bộ `drawFigure()` (16 file main + secondary indicator) truyền `chartColors.candleStyle.textStyle` vào — sau đó nâng cấp tiếp thành `indicatorStyle.textStyle` riêng từng indicator (xem mục dưới).
-- **feat:** Mỗi indicator style (`AVLStyle`, `MAStyle`, `BOLLStyle`, `RSIStyle`, `MACDStyle`, `KDJStyle`...) giờ có `textStyle` RIÊNG — thêm field vào base class `IndicatorStyle` (mặc định `fontSize: 10`), forward qua `super.textStyle` ở cả 15 subclass. Label mỗi indicator giờ chỉnh font độc lập nhau qua `KChartColors.xxxStyle.textStyle`, không còn dùng chung `candleStyle.textStyle` như bước fix bug ở trên.
-- **refactor (cleanup):** dọn 4 finding non-correctness (cleanup/altitude/efficiency) còn lại từ cùng đợt code review:
-  - `KChartColors.copyWith()` — method mới, override 1-2 field giữ nguyên phần còn lại, thay vì tự liệt kê tay đủ 25+ field (`example/lib/main.dart`'s `_demoColors` trước đó phải copy tay 9 field chỉ để giữ nguyên).
-  - `applyIndicatorColorStyles()` gộp switch 16 case gần giống hệt nhau thành 1 helper generic `_applyDefaultStyle<K>(ind, defaultStyle, override)` — rút từ ~90 dòng còn ~45.
-  - `DepthChartStyle` thêm `textStyle`/`annotationTextStyle` (default fontSize 10/9) — theo đúng convention `CandleStyle`/`VolumeStyle` vừa làm, thay 2 chỗ hard-code fontSize trong `depth_chart.dart` (`getTextPainter`, `_PopupPainter._getTextPainter`).
-  - `example/lib/main.dart`: cache `_mainIndicatorsFor`/`_secondaryIndicatorsFor` theo nội dung `Set` (so bằng `_setEquals`, không phải reference) — trước đó `ChartState.mainIndicators`/`secondaryIndicators` là getter tạo instance (+ Paint) mới mỗi lần gọi, và `BlocBuilder` rebuild trên MỌI thay đổi state (kể cả `livePrice` cập nhật mỗi tick WS không throttle) → mỗi tick giá rebuild lại toàn bộ 15 indicator dù `mainTypes`/`secondaryTypes` không đổi.
-- **feat:** `LivePriceStyle` (`lib/styles/live_price_style.dart`) — tách `nowPriceUpColor`/`nowPriceDnColor` khỏi `KChartColors` thành model riêng (`upColor`, `dnColor`, `textStyle`), cùng convention `CandleStyle`/`VolumeStyle`. **`upColor`/`dnColor` CHỈ tô nền badge + đường kẻ ngang** (`ChartPainter.drawNowPrice`); màu CHỮ luôn lấy từ `textStyle.color` (default `Colors.white`) — KHÔNG dùng `upColor`/`dnColor` cho chữ, vì nền badge giờ là màu đặc nên chữ cùng màu nền sẽ gần như vô hình.
-- **feat:** `LivePriceBadgePainter` (cùng file) — badge "flag" (nền bo góc + mũi tên nhỏ trỏ trái) convert từ `assets/Number.svg` (`viewBox="0 0 54 14"`), gắn thẳng vào `ChartPainter.drawNowPrice()` thay cho `RRect + border` phẳng cũ (gọi trực tiếp `LivePriceBadgePainter(...).paint(canvas, size)` lên canvas thật, không qua widget `CustomPaint`). Nền + mũi tên cùng nhân 1 cặp tỉ lệ `scaleX = size.width/54`, `scaleY = size.height/14` — khớp đúng cách SVG gốc tự scale ĐỒNG BỘ mọi phần tử con theo viewBox (bug ban đầu: chỉ nền được scale, mũi tên để nguyên toạ độ tuyệt đối → lệch khi badge không đúng 54×14); nhờ vậy badge tự co giãn đúng tỉ lệ theo độ dài số giá. Mũi tên trỏ trái khớp đúng ngữ nghĩa "chỉ vào đường giá" khi badge đứng mép PHẢI chart (`VerticalTextAlignment.right`, mặc định); dùng `left` thì mũi tên trỏ ra ngoài thay vì vào chart (hạn chế của asset gốc — chỉ có 1 chiều, chưa có bản mirror).
-  - Padding badge (`chart_painter.dart` `drawNowPrice`) đổi từ `(paddingX: 3, paddingY: 1.5)` → `(5, 3)`.
-  - Kéo theo: xoá 2 field `nowPriceSelectorPaint`/`nowPriceSelectorBorderPaint` trên `ChartPainter` (không còn dùng sau khi badge chuyển sang vẽ qua `LivePriceBadgePainter`).
-- **fix:** `VolRenderer.drawChart` — cột volume dùng `base.withValues(alpha: chartStyle.volBarOpacity)`, **ghi đè hoàn toàn** alpha sẵn có của `volumeStyle.upColor`/`dnColor` thay vì nhân dồn. Hệ quả: set alpha thẳng trong `Color` (vd `Color(0x8076FF03)`) bị bỏ qua vô hình nếu `chartStyle.volBarOpacity` giữ nguyên default `1.0`. Sửa: `base.withValues(alpha: base.a * chartStyle.volBarOpacity)` — set opacity qua alpha-channel của `Color` hoặc qua `volBarOpacity` đều dùng được, kết hợp được cả hai (nhân dồn).
-- **feat:** `StochRSIIndicator` — secondary indicator Stochastic RSI. Xem chi tiết [9.2](#92-built-in-indicators).
-  - `calcParams: [14, 14, 3, 3]` — (N1: RSI length, N2: Stoch length, M1: smooth %K, M2: smooth %D), chuẩn Binance/TradingView.
-  - Công thức: RSI Wilder tính **nội bộ** trong `calc()` (không dùng lại `entity.rsi` — RSIIndicator có thể không được bật, period có thể khác), `StochRSI = (RSI − MIN(RSI,N2)) / (MAX(RSI,N2) − MIN(RSI,N2)) × 100`, `%K = SMA(StochRSI, M1)`, `%D = SMA(%K, M2)`. Pipeline 4 tầng chạy 1 vòng lặp O(n).
-  - Output: `entity.stochRsiK` / `entity.stochRsiD` — mixin mới `StochRSIEntity` (`lib/entity/stoch_rsi_entity.dart`), nối vào `on` clause của `MACDEntity`, đứng **trước** `MACDEntity` trong `KEntity`.
-  - Style: `StochRSIStyle({ kColor, dColor })` — K vàng `0xFFFFC634`, D xanh `0xff35cdac`.
-  - Kèm **2 đường tham chiếu nét đứt 20/80** (quá bán/quá mua) kiểu Binance qua `referenceValues => [20, 80]`; `getMaxMinValue` ép range panel bao luôn `[20, 80]` để vạch không chạy ra ngoài.
-  - Edge case: `MAX == MIN` (RSI đi ngang tuyệt đối) → StochRSI = 0 theo convention TradingView. Null-chain: %K có từ nến ~30, %D từ nến ~32 với params mặc định.
-- **feat:** Cơ chế **đường tham chiếu ngang** dùng chung cho mọi secondary indicator (không riêng StochRSI):
-  - `SecondaryIndicator.referenceValues` — getter mới, mặc định `[]`; indicator phụ nào muốn có vạch mốc chỉ cần override, không đụng renderer.
-  - `SecondaryRenderer.drawReferenceLines(canvas)` — vẽ nét đứt 4px-4px, màu `defaultTextColor` alpha 90, strokeWidth 0.5, một lần mỗi frame.
-  - Gọi từ `ChartPainter.drawChart()` ở **screen space trước translate/scale** → vạch không giãn theo scaleX, nằm phía sau đường indicator, và **vẫn hiển thị khi `hideGrid = true`** (khác grid thường).
-  - Kéo theo: `ChartPainter.mSecondaryRendererList` thu hẹp kiểu từ `Set<BaseChartRenderer>` → `Set<SecondaryRenderer>`.
-- **feat:** `AVLIndicator` — main indicator Average Value Line kiểu Binance, đường đi xuyên qua thân nến. Xem chi tiết [9.2](#92-built-in-indicators).
-  - Công thức: `AVL = amount / vol` — giá khớp lệnh trung bình thực của từng nến (quote volume ÷ base volume); fallback khi `amount` null/0 hoặc `vol = 0`: typical price `(H+L+C)/3` (vẫn luôn nằm trong range high–low của nến).
-  - `calcParams: []` — không có param chu kỳ.
-  - Output: `entity.avl` — mixin mới `AVLEntity` (`lib/entity/avl_entity.dart`); theo pattern ZigZag: đứng **sau** `MACDEntity` trong `KEntity`, indicator cast `entity as AVLEntity` (main indicator dùng `CandleEntity` làm T — không cần vào `on` clause).
-  - Style: `AVLStyle({ avlColor, lineWidth })` — mặc định vàng `0xFFFFC634`, lineWidth 1.0.
-  - Cần API trả `amount` (quote volume) để có giá trị thực; thiếu thì fallback vẫn bám nến nhưng không phản ánh volume-weighting. Biến thể đã thử và bỏ: cumulative VWAP (đường trôi xa khỏi cụm nến, kéo giãn trục Y), rolling VWAP N nến (mượt nhưng vẫn lệch nến, không giống Binance).
-- **feat:** `MTMIndicator` — secondary indicator Momentum. Xem chi tiết [9.2](#92-built-in-indicators).
-  - `calcParams: [12, 6]` — (N: chu kỳ momentum, M: chu kỳ MA signal).
-  - Công thức: `MTM = CLOSE − REF(CLOSE, N)` (biến thể tuyệt đối classic), `MTMMA = MA(MTM, M)` — sliding-window sum O(n).
-  - Output: `entity.mtm` / `entity.mtmMa` — mixin mới `MTMEntity` (`lib/entity/mtm_entity.dart`), nối vào `on` clause của `MACDEntity`, đứng **trước** `MACDEntity` trong `KEntity`.
-  - Style: `MTMStyle({ mtmColor, mtmMaColor })` — MTM vàng `0xFFFFC634`, MTMMA xanh `0xff35cdac`.
-  - Null: `mtm` null khi `i < N`; `mtmMa` null tới khi đủ M giá trị MTM. Scale phụ thuộc giá tuyệt đối của symbol (BTC ra hàng trăm/nghìn) — cần scale % thì đổi 1 dòng trong `calc()` sang ROC-style `(CLOSE − REF)/REF × 100`.
-- **feat:** `entity/index.dart` export đầy đủ các entity mixin: bổ sung `avl_entity.dart`, `mtm_entity.dart`, `stoch_rsi_entity.dart`, và `trix_entity.dart` (trước đây bị sót export dù TRIX đã release ở 1.0.2).
-- **feat:** Example app (`example/lib/main.dart`) bổ sung chip toggle cho các indicator mới:
-  - Main: **ZigZag** (indicator có từ 0.0.1 nhưng chưa có chip demo), **AVL**.
-  - Secondary: **MTM**, **StochRSI**.
-
-### 1.0.2
-
-- **feat:** `SuperTrendIndicator` (SUPER) — main indicator SuperTrend. Xem chi tiết [9.2](#92-built-in-indicators).
-  - `calcParams: [10, 30]` — (N: ATR period, multiplier×10 → factor 3.0).
-  - Công thức: `ATR = RMA(TR, N)` (seed = SMA(TR,N), sau đó Wilder smoothing `atr = (atr×(N−1)+tr)/N`), band = `(H+L)/2 ± factor×ATR`, trend flip khi close cắt qua band hiện tại.
-  - Output: `entity.superTrend = SuperTrend { value, isUp }` — class định nghĩa trong `super_trend_indicator.dart`, field nằm ở `CandleEntity` (main indicator, không cần entity mixin riêng).
-  - Style: `SuperTrendStyle({ upColor, dnColor, upFillColor, dnFillColor, lineWidth })` — đường đổi màu theo `isUp` (xanh uptrend/band dưới giá, đỏ downtrend/band trên giá) + fill mờ giữa band và giá; label `SUPER: x` cũng đổi màu theo trend.
-- **feat:** `TRIXIndicator` (TRIX) — secondary indicator TRIX/MATRIX. Xem chi tiết [9.2](#92-built-in-indicators).
-  - `calcParams: [12, 20]` — (N: chu kỳ triple EMA, M: chu kỳ MA signal).
-  - Công thức: `EMA1 = EMA(CLOSE,N)`, `EMA2 = EMA(EMA1,N)`, `EMA3 = EMA(EMA2,N)`, `TRIX = (EMA3 − REF(EMA3,1)) / REF(EMA3,1) × 100`, `MATRIX = MA(TRIX, M)` — EMA seed bằng close nến đầu, MA signal sliding-window sum O(n).
-  - Output: `entity.trix` / `entity.trixMa` — mixin `TRIXEntity` (`lib/entity/trix_entity.dart`), nối vào `on` clause của `MACDEntity`, đứng **trước** `MACDEntity` trong `KEntity`.
-  - Style: `TRIXStyle({ trixColor, trixMaColor })` — TRIX vàng `0xFFFFC634`, MATRIX xanh `0xff35cdac`.
-  - Null: `trix` null ở nến đầu (chưa có `prevEma3`); `trixMa` null tới khi đủ M giá trị TRIX.
-
-### 1.0.1
-
-- **fix:** `onLoadMore(true)` không được tự động gọi khi data ban đầu (hoặc sau khi load thêm) chưa lấp đầy chiều rộng chart (`ChartPainter.maxScrollX <= 0`) và user chưa thực hiện gesture nào. Trước đây `onLoadMore` chỉ trigger từ `onScaleUpdate`/`onScaleEnd`/fling nên chart hiển thị ít data hơn màn hình sẽ đứng im vô thời hạn. Đã thêm `_maybeLoadMoreForNarrowData()` gọi trong `initState`/`didUpdateWidget` (qua `addPostFrameCallback`), guard bằng `_narrowLoadRequestedForLength` để không gọi trùng `onLoadMore` mỗi khi widget rebuild vì lý do không liên quan tới `datas`. Chi tiết: [13.9](#139-auto-load-khi-data-chưa-lấp-đầy-chart-không-cần-gesture).
-- **docs:** Sửa doc comment gây warning khi generate `dartdoc`: generic type `List<SecondaryIndicator<MACDEntity, dynamic>>` bị hiểu nhầm là thẻ HTML, và `[0]`/`[i]`/`[i-1]`/`[scaleX]` bị hiểu nhầm là doc-reference link không tồn tại.
-
-### 1.0.0
-
-- **feat:** `KChartScaleState` — class lưu/khôi phục trạng thái zoom (`scaleX`, `scaleY`, `scrollX`). Truyền qua `KChartWidget.chartScale` để restore khi đổi timeframe; `scaleX` tự clamp theo `minScale`/`maxScale`. Callback `onChartScaleChanged` (`OnChartScaleChanged`) emit sau khi kết thúc pinch, scaleY drag, zoom controller, hoặc double-tap reset scaleY.
-- **feat:** Panel volume hiển thị thêm label giá trị nhỏ nhất (min vol trong vùng hiển thị) ở góc dưới-phải, giống cách MACD hiển thị min. `mVolMinValue` không còn hardcode `0` mà được tính từ data thực tế.
-
-### 0.0.1
-
-- Initial release of k_chart_jk — a Flutter candlestick chart package.
-- Candlestick and line chart rendering with smooth gesture support (pan, zoom, fling).
-- Main indicators: MA, EMA, BOLL, SAR, ZigZag.
-- Secondary indicators: MACD, KDJ, RSI, WR, CCI.
-- Volume bar chart with MA5/MA10 overlay.
-- Long-press info dialog with customizable `detailBuilder`.
-- Dark/light theme support via `KChartColors`.
-- `KChartController` for programmatic zoom in/out and reset.
-- Depth chart widget (`DepthChart`) for order book visualization.
-- Multi-language support via `ChartTranslations`.
-
----
-
-## 2. Tổng quan kiến trúc
+## 1. Tổng quan kiến trúc
 
 Mã nguồn chart được thiết kế theo mô hình:
 
@@ -181,11 +50,11 @@ KChartWidget  (state + gesture)
    ├─ backgroundLogo (IgnorePointer, Center)  ← watermark giữa main rect
    ├─ CustomPaint(painter: ChartPainter)
    │   └─ ChartPainter.paint()
-   │       ├─ initRect()              → mMainRect, mVolRect?, mDateRect, mSecondaryRectList[]
-   │       ├─ calculateValue()        → mStartIndex/mStopIndex + max/min
-   │       ├─ initChartRenderer()     → mMainRenderer + mVolRenderer? + mSecondaryRendererList[]
-   │       ├─ drawBg()                (skip nếu skipBg)
-   │       ├─ drawGrid()
+   │       ├─ initRect()              → mPlotWidth, mMainRect, mVolRect?, mDateRect, mSecondaryRectList[], mPriceAxisRect, mCornerRect
+   │       ├─ calculateValue()        → mStartIndex/mStopIndex (theo mPlotWidth) + max/min + mTimeTicks (weight-ladder planner, CHART_AXES.md §5)
+   │       ├─ initChartRenderer()     → mMainRenderer + mVolRenderer? + mSecondaryRendererList[] (đều nhận priceAxisRect) + đo lại priceAxisWidth cho frame SAU (§7.6)
+   │       ├─ drawBg()                (skip nếu skipBg; phủ cả strip giá + ô góc chết)
+   │       ├─ drawGrid()              (theo mTimeTicks dùng chung + _priceTicks mỗi panel) + 2 đường phân cách khung (§7.5)
    │       ├─ drawChart()
    │       │   ├─ canvas: translate(mTranslateX*scaleX) + scale(scaleX, 1)
    │       │   ├─ scaleY scope:
@@ -197,13 +66,14 @@ KChartWidget  (state + gesture)
    │       │   │   ├─ mVolRenderer?.drawChart()
    │       │   │   └─ for each SecondaryRenderer.drawChart()
    │       │   └─ drawCrossLine / drawTrendLines
-   │       ├─ drawVerticalText()       (main + vol + secondaries)
-   │       ├─ drawDate()
+   │       ├─ drawVerticalText()       (main + vol + secondaries — vẽ vào mPriceAxisRect, không đè lên nội dung panel nữa)
+   │       ├─ drawDate()               (clip canvas theo mPlotWidth, vẽ label ở đúng vị trí thật — không phải full mWidth)
    │       ├─ drawText(getItem(mStopIndex))    (main + vol + secondaries)
    │       ├─ drawMaxAndMin() / drawNowPrice()     (qua _applyScaleY)
-   │       └─ drawCrossLineText() (nếu long-press/tap)
-   └─ Positioned (right:0) + LayoutBuilder → w = effectiveRightPaddingPx
-       ─ vùng gesture scaleY + double-tap reset scaleY/offsetY
+   │       ├─ drawBidAsk()               (chạy NGAY SAU drawNowPrice — box Ask/Bid, chỉ khi bidPrice+askPrice cùng non-null, xem §5.8)
+   │       └─ drawCrossLineText() (nếu long-press/tap — span cả mWidth, KHÔNG bị giới hạn mPlotWidth, xem CHART_AXES.md §7.5)
+   └─ Positioned (right:0) + LayoutBuilder → w = BaseChartPainter.priceAxisWidth
+       ─ vùng gesture scaleY + double-tap reset scaleY/offsetY (khớp đúng strip giá đang vẽ, §7.7)
 ```
 
 ### Flow dữ liệu
@@ -218,14 +88,15 @@ KChartWidget  (state + gesture)
 
 - **Widget quản lý trạng thái + gesture, painter vẽ toàn bộ.**
 - **Một `CustomPaint`** cho main chart; secondary indicators KHÔNG phải widget riêng.
-- **Tính min/max chỉ trên vùng dữ liệu visible** (`mStartIndex..mStopIndex`).
+- **Tính min/max chỉ trên vùng dữ liệu visible** (`mStartIndex..mStopIndex`, tính theo `mPlotWidth` — KHÔNG phải `mWidth`, xem [11](#11-renderer-internals) "Price axis strip").
 - **`scrollX` và `scaleX` thành phép biến đổi canvas**, không vẽ tay từng phần.
 - **`scaleY` áp riêng cho main**, secondary nằm ngoài transform để không bị giãn.
+- **Tick trục X/Y tính lại mỗi frame theo layer riêng** (`BaseChartPainter._updateTimeTicks()` cho X, `MainRenderer` constructor cho Y) — renderer con không tự chọn tick, chỉ vẽ danh sách đã tính sẵn. Chi tiết đầy đủ ở `CHART_AXES.md` + [9.4](#94-time-tick-planner--price-ticks-trục-xy).
 - **Mọi label vẽ ngoài canvas transform** phải đi qua `_applyScaleY(rawY)`.
 
 ---
 
-## 3. Cài đặt & Quick Start
+## 2. Cài đặt & Quick Start
 
 ### Dependency
 
@@ -269,7 +140,7 @@ KChartWidget(
 
 ### Ví dụ đầy đủ
 
-Widget tự chứa (copy-paste chạy được, chỉ cần cắm nguồn data thật vào `_fetchInitialCandles`/`_loadMoreHistory`) — bật **toàn bộ** 6 main + 9 secondary indicator, custom màu qua `CandleStyle`/`VolumeStyle`/style riêng từng indicator (xem [8.2](#82-kchartcolors)), toggle dark mode / line-vs-candlestick, zoom qua `KChartController`, và `DepthChart` đi kèm. Đây gần như nguyên bản cách `example/lib/main.dart` + `example/lib/bloc/chart_bloc.dart` trong repo demo dựng lên (repo demo tách phần data/network ra `ChartBloc` — ở đây gộp thẳng vào `State` cho gọn).
+Widget tự chứa (copy-paste chạy được, chỉ cần cắm nguồn data thật vào `_fetchInitialCandles`/`_loadMoreHistory`) — bật **toàn bộ** 6 main + 9 secondary indicator, custom màu qua `CandleStyle`/`VolumeStyle`/style riêng từng indicator (xem [7.2](#72-kchartcolors)), toggle dark mode / line-vs-candlestick, zoom qua `KChartController`, và `DepthChart` đi kèm. Đây gần như nguyên bản cách `example/lib/main.dart` + `example/lib/bloc/chart_bloc.dart` trong repo demo dựng lên (repo demo tách phần data/network ra `ChartBloc` — ở đây gộp thẳng vào `State` cho gọn).
 
 ```dart
 import 'package:flutter/material.dart';
@@ -435,7 +306,7 @@ class _InfoCard extends StatelessWidget {
 }
 ```
 
-**Kèm `DepthChart`** (order book — widget độc lập, không phụ thuộc `KChartWidget`, xem [11](#11-depthchart--orderbook-depth)):
+**Kèm `DepthChart`** (order book — widget độc lập, không phụ thuộc `KChartWidget`, xem [10](#10-depthchart--orderbook-depth)):
 
 ```dart
 DepthChart(
@@ -450,19 +321,21 @@ DepthChart(
 )
 ```
 
-`DepthChartStyle` hiện KHÔNG có field `textStyle`/`fontSize` — nhãn trục và popup annotation của `DepthChart` vẫn hard-code `fontSize: 10`/`9` trong `depth_chart.dart` (chưa được tách ra như `CandleStyle.textStyle`/`VolumeStyle.textStyle` ở [8.2](#82-kchartcolors)); nói nếu muốn mình bổ sung tương tự.
+`DepthChartStyle` hiện KHÔNG có field `textStyle`/`fontSize` — nhãn trục và popup annotation của `DepthChart` vẫn hard-code `fontSize: 10`/`9` trong `depth_chart.dart` (chưa được tách ra như `CandleStyle.textStyle`/`VolumeStyle.textStyle` ở [7.2](#72-kchartcolors)); nói nếu muốn mình bổ sung tương tự.
 
 ---
 
-## 4. Entry point & exports
+## 3. Entry point & exports
 
 File chính import: `package:k_chart_jk/k_chart_plus.dart`. Re-export:
 
 | Export                              | Chứa gì                                                                              |
 | ----------------------------------- | ------------------------------------------------------------------------------------ |
 | `k_chart_widget.dart`               | `KChartWidget`, `TimeFormat`, `WidgetDetailBuilder`                                  |
-| `styles/k_chart_style.dart`         | `KChartStyle`, `KChartColors`                                                        |
+| `styles/k_chart_style.dart`         | `KChartStyle`, `KChartColors`, `CandleStyle`, `CandleBodyStyle`                      |
 | `styles/depth_chart_style.dart`     | `DepthChartStyle`, `DepthChartColors`                                                |
+| `styles/candle_style/candle_style_icon.dart`    | `CandleStyleIcon` — icon nhỏ (2 nến mini) minh hoạ 1 `CandleBodyStyle`, vẽ bằng `CustomPainter`. |
+| `styles/candle_style/candle_style_preview.dart` | `CandleStylePreview` — preview lớn (nến hoặc line chart) trên chuỗi giá tổng hợp cố định, dùng cho UI chọn "Kiểu K-line". |
 | `depth_chart.dart`                  | `DepthChart` widget                                                                  |
 | `chart_translations.dart`           | `DepthChartTranslations`                                                             |
 | `utils/index.dart`                  | `DataUtil`, `dateFormat`, `NumberUtil`, format tokens                                |
@@ -474,9 +347,9 @@ File chính import: `package:k_chart_jk/k_chart_plus.dart`. Re-export:
 
 ---
 
-## 5. Entity — data models
+## 4. Entity — data models
 
-### 5.1 `KLineEntity`
+### 4.1 `KLineEntity`
 
 Nến chính. Kế thừa `KEntity` (multi-mixin) → mang sẵn slot cho mọi chỉ báo.
 
@@ -498,7 +371,7 @@ Nến chính. Kế thừa `KEntity` (multi-mixin) → mang sẵn slot cho mọi 
 - `KLineEntity.fromJson(json)` — parse từ Map. Fallback: nếu thiếu `time` lấy `id * 1000`.
 - `.toJson()` — serialize ngược.
 
-### 5.2 `KEntity` & các mixin
+### 4.2 `KEntity` & các mixin
 
 ```dart
 class KEntity with
@@ -535,7 +408,7 @@ class KEntity with
 
 **Thứ tự mixin quan trọng** — `OBVEntity`/`TRIXEntity`/`MTMEntity` phải đứng trước `MACDEntity` (do `MACDEntity on ... OBVEntity, TRIXEntity, MTMEntity`).
 
-### 5.3 `InfoWindowEntity`
+### 4.3 `InfoWindowEntity`
 
 ```dart
 class InfoWindowEntity {
@@ -544,7 +417,7 @@ class InfoWindowEntity {
 }
 ```
 
-### 5.4 `DepthEntity`
+### 4.4 `DepthEntity`
 
 ```dart
 class DepthEntity {
@@ -553,7 +426,7 @@ class DepthEntity {
 }
 ```
 
-### 5.5 Mixin type system — generic indicator
+### 4.5 Mixin type system — generic indicator
 
 Khi dùng `List<SecondaryIndicator<MACDEntity, dynamic>>`, indicator mới cần entity riêng → thêm entity vào `on` clause của `MACDEntity` và đặt trước `MACDEntity` trong `KEntity`:
 
@@ -567,11 +440,11 @@ Khi dùng `List<SecondaryIndicator<MACDEntity, dynamic>>`, indicator mới cần
 
 ---
 
-## 6. `KChartWidget` — API đầy đủ
+## 5. `KChartWidget` — API đầy đủ
 
 File: `lib/k_chart_widget.dart`.
 
-### 6.1 Required
+### 5.1 Required
 
 | Param           | Kiểu                           | Ý nghĩa                               |
 | --------------- | ------------------------------ | ------------------------------------- |
@@ -581,7 +454,7 @@ File: `lib/k_chart_widget.dart`.
 | `detailBuilder` | `Widget Function(KLineEntity)` | Builder cho info dialog (long-press). |
 | `isTrendLine`   | `bool`                         | Bật mode vẽ trend line.               |
 
-### 6.2 Indicators & display
+### 5.2 Indicators & display
 
 | Param                   | Default                   | Ý nghĩa                                               |
 | ----------------------- | ------------------------- | ----------------------------------------------------- |
@@ -596,11 +469,13 @@ File: `lib/k_chart_widget.dart`.
 | `materialInfoDialog`    | `true`                    | Style dialog Material vs Cupertino.                   |
 | `timeFormat`            | `TimeFormat.yearMonthDay` | Format thời gian dưới X axis.                         |
 | `livePrice`             | `null`                    | Giá realtime override cho now price.                  |
-| `xFrontPadding`         | `100`                     | Padding phải sau nến cuối (px tại chart ≥375px).      |
+| `bidPrice`/`askPrice`   | `null`                    | Best bid/best ask từ order book — vẽ thêm box Ask/Bid riêng, cạnh badge now-price. Xem §5.8. |
+| `bidLabel`/`askLabel`   | `'Bid'`/`'Ask'`           | Text prefix trong box Ask/Bid — đổi cho i18n.         |
+| `xFrontPadding`         | `40`                      | Padding phải sau nến cuối (px tại chart ≥375px). Giảm từ `100` theo yêu cầu trực tiếp — xem §12.11. |
 | `verticalTextAlignment` | `right`                   | `left` / `right` — vị trí label giá dọc.              |
 | `fixedLength`           | `2`                       | Số chữ số thập phân format giá.                       |
 
-### 6.3 Pan / zoom / scroll
+### 5.3 Pan / zoom / scroll
 
 | Param              | Default             | Ý nghĩa                              |
 | ------------------ | ------------------- | ------------------------------------ |
@@ -611,12 +486,13 @@ File: `lib/k_chart_widget.dart`.
 | `flingCurve`       | `Curves.decelerate` | Curve animation fling.               |
 | `mBaseHeight`      | `360`               | Height (px) của main chart panel.    |
 | `mSecondaryHeight` | `mBaseHeight * 0.2` | Height (px) của mỗi secondary panel. |
+| `xOverscrollPadding` | `200`              | Overscroll TỐI ĐA (px tại chart ≥375px) — user kéo quá vị trí nghỉ mặc định (`scrollX = 0`) để tự lộ thêm khoảng trống bên phải (giống Binance/MEXC). Thả tay giữ nguyên vị trí, không tự bật về. `0` = tắt hẳn. Xem §12.10. |
 
-### 6.4 Load more / callback
+### 5.4 Load more / callback
 
 | Param                  | Kiểu                          | Ý nghĩa                                                                                                                                                                 |
 | ---------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `onLoadMore`           | `void Function(bool isLeft)?` | Trigger khi scroll gần biên **hoặc** khi data chưa lấp đầy chart (xem [13.9](#139-auto-load-khi-data-chưa-lấp-đầy-chart-không-cần-gesture)). `true` = load data cũ hơn. |
+| `onLoadMore`           | `void Function(bool isLeft)?` | Trigger khi scroll gần biên **hoặc** khi data chưa lấp đầy chart (xem [12.9](#129-auto-load-khi-data-chưa-lấp-đầy-chart-không-cần-gesture)). `true` = load data cũ hơn. |
 | `isLoadingMore`        | `bool`                        | Cờ khoá tránh duplicate request.                                                                                                                                        |
 | `isOnDrag`             | `void Function(bool)?`        | Callback start/stop drag.                                                                                                                                               |
 | `controller`           | `KChartController?`           | Điều khiển từ ngoài.                                                                                                                                                    |
@@ -625,29 +501,109 @@ File: `lib/k_chart_widget.dart`.
 
 **Lưu ý:** `onLoadMore` không chỉ trigger từ gesture (pan/pinch/fling) mà còn tự bắn từ `initState`/`didUpdateWidget` nếu data hiện tại chưa đủ lấp đầy chiều rộng chart — không cần user tương tác gì (fix 1.0.1).
 
-### 6.5 Zoom state
+### 5.5 Zoom state
 
 | Param        | Kiểu                | Ý nghĩa                                                 |
 | ------------ | ------------------- | ------------------------------------------------------- |
 | `chartScale` | `KChartScaleState?` | Scale đã lưu — truyền lại khi đổi timeframe để restore. |
 
-### 6.6 Background watermark
+### 5.6 Background watermark
 
 | Param                   | Default | Ý nghĩa                                                      |
 | ----------------------- | ------- | ------------------------------------------------------------ |
 | `backgroundLogo`        | `null`  | Widget overlay ở giữa main chart. Có `IgnorePointer` nội bộ. |
 | `backgroundLogoOpacity` | `1.0`   | 0.0 ẩn — 1.0 hiện đầy đủ.                                    |
 
-### 6.7 `TimeFormat` constants
+### 5.7 `TimeFormat` constants & ép format nhãn trục thời gian
 
 ```dart
 TimeFormat.yearMonthDay         // yyyy-MM-dd
 TimeFormat.yearMonthDayWithHour // yyyy-MM-dd HH:mm
 ```
 
+`KChartWidget.timeFormat` (`List<String>?`, mặc định `null`) — ép format này cho **MỌI** tick trục X + label crosshair, bất kể `tickWeight`, bỏ qua hẳn thuật toán thích ứng ở [9.4](#94-time-tick-planner--price-ticks-trục-xy). `null` (mặc định) = giữ hành vi thích ứng (format tự đổi theo mức zoom — "10" ở ranh giới ngày, "09:05" giữa ngày, ...).
+
+> **Trước đây field này KHÔNG có tác dụng gì** — khai báo nhưng chưa từng được đọc ở đâu trong pipeline vẽ (bug tồn tại từ trước, phát hiện + sửa khi viết lại trục thời gian, xem Unreleased). Giờ nó được nối vào `chartStyle.dateTimeFormat` (field THẬT SỰ chạy tới `BaseChartPainter._updateTimeTicks`/`initFormats`) ngay trong `KChartWidget.build()`, ưu tiên `chartStyle.dateTimeFormat` nếu cả 2 cùng được set.
+
+```dart
+KChartWidget(
+  data, style, colors,
+  timeFormat: timeframe == d1
+      ? const [dd, '-', mm, '-', yyyy]           // luôn "10-08-2026"
+      : const [dd, '-', mm, ' ', hour24Padded, ':', nn], // luôn "10-08 14:30"
+  // ...
+)
+```
+
+### 5.8 Bid/Ask box (order book) — `bidPrice`/`askPrice`
+
+File: `lib/renderer/chart_painter.dart` — `ChartPainter.drawBidAsk` (chạy ngay sau `drawNowPrice` trong `paint()`, xem sơ đồ §1).
+
+Khi `bidPrice` VÀ `askPrice` cùng non-null, vẽ thêm 1 box nhỏ 2 ô xếp chồng — Ask (đỏ, `chartColors.livePriceStyle.dnColor`) ở trên, Bid (xanh, `chartColors.livePriceStyle.upColor`) ở dưới — đặt CẠNH badge now-price (do `drawNowPrice` vẽ, không đổi gì cả — badge vẫn luôn vẽ độc lập, kể cả khi có `bidPrice`/`askPrice`). Thiếu 1 trong 2 (`null`) thì không vẽ box này.
+
+**Vị trí ngang — "về phía tâm plot", không cố định 1 phía:**
+
+```dart
+// Mép trái/phải badge now-price — CÙNG công thức drawNowPrice dùng (paddingX=6, paddingY=4, space=8.0,
+// gộp thành static const _liveBadgePaddingX/_liveBadgePaddingY/_liveBadgeSpace dùng chung giữa 2 hàm):
+flagBadgeWidth = priceTp.width + _liveBadgePaddingX * 2
+flagLeft = verticalTextAlignment == right
+    ? mPlotWidth - _liveBadgeSpace    // badge đẩy ra ngoài, nằm TRÊN price-axis strip (xem §12.11) —
+                                        // chỉ lấn `space` px vào plot, KHÔNG trừ thêm flagBadgeWidth như trước
+    : _liveBadgeSpace                  // badge sát mép trái (không có price-axis strip bên trái, không đổi)
+flagRight = flagLeft + flagBadgeWidth
+
+// Box luôn về phía TÂM PLOT so với badge — KHÔNG cố định "luôn bên trái":
+left = verticalTextAlignment == right
+    ? flagLeft - gap - boxWidth   // right: badge sát phải -> box qua TRÁI badge
+    : flagRight + gap             // left: badge sát trái  -> box qua PHẢI badge
+```
+
+> **Vì sao không cố định "luôn bên trái badge":** ban đầu box được đặt cố định bên trái badge bất kể alignment. Với `right` (mặc định) điều đó đúng — badge sát mép phải, box lùi vào giữa plot. Nhưng với `left`, badge đã sát mép TRÁI plot (`flagLeft = space = 5.0`) — đặt thêm box về bên trái nữa cho ra toạ độ X **âm**, ngoài `clipRect(0, 0, size.width, size.height)` của `paint()`: box + text vẽ hoàn toàn ngoài canvas, vô hình. Phát hiện qua `/code-review`, sửa bằng quy tắc mirror theo alignment ở trên — port sang platform khác PHẢI giữ đúng nhánh `left`/`right` này, không được rút gọn về 1 công thức chung.
+>
+> **`flagLeft` (nhánh `right`) đã đổi công thức khi badge now-price bị đẩy ra ngoài axis (§5.9)** — `left`/box của Ask/Bid tự động "bám" theo vị trí mới của badge (không cần sửa gì thêm ở nhánh box), vì cả 2 công thức dùng chung `flagLeft` làm điểm neo.
+
+**Vị trí dọc — LUÔN center theo Y của badge, không có ngoại lệ:**
+
+```dart
+centerY = _applyScaleY(getMainY(value)).clamp(minY, maxY)   // value = livePrice ?? datas.last.close — CÙNG value/công thức drawNowPrice dùng cho đường dashed
+top = centerY - boxHeight / 2      // box 2 hàng, badge 1 hàng -> box vươn đều 2 phía quanh Y badge
+```
+
+> **Không kẹp `top` vào `[minY, maxY]` theo chiều cao box** (khác badge now-price, vốn tự kẹp theo cách riêng của nó). Đây là đánh đổi CỐ Ý theo yêu cầu trực tiếp "luôn luôn căn giữa so với live price trong mọi case": khi giá sát đỉnh/đáy dải hiển thị, box có thể tràn nhẹ ra ngoài `mMainRect` (vào phần padding trên/panel volume dưới) thay vì bị đẩy lệch tâm. Port phải giữ đúng: **ưu tiên căn giữa tuyệt đối hơn ở gọn trong `mMainRect`**, cho riêng box này (không áp dụng ngược lại cho badge now-price).
+
+**Không throttle/toggle nào riêng cho việc vẽ** — mỗi lần `bidPrice`/`askPrice` đổi (`ChartPainter.shouldRepaint` so sánh field này) là 1 lần repaint toàn bộ, giống mọi field khác. App tự quyết định khi nào truyền giá trị thật vs `null` (xem ghi chú hiệu năng trong `README.md#bid-ask-badges-order-book` — pattern khuyến nghị: truyền thẳng `null` khi không hiển thị, không phải "tính rồi ẩn UI").
+
+### 5.9 Vị trí badge now-price — đẩy ra ngoài, nằm trên price-axis strip
+
+File: `lib/renderer/chart_painter.dart` — `ChartPainter.drawNowPrice`.
+
+Theo yêu cầu trực tiếp ("đẩy live-price ra ngoài nằm trên axis Y luôn"), với `verticalTextAlignment: right` (mặc định), badge now-price giờ đặt CHỦ YẾU trên `mPriceAxisRect` (strip trục giá bên phải) thay vì nằm gọn trong `mPlotWidth` như trước:
+
+```dart
+// TRƯỚC: offsetX = mPlotWidth - tp.width - paddingX*2 - space   (badge nằm gọn trong mPlotWidth,
+//         mép phải cách mPlotWidth đúng `space`)
+// SAU:
+offsetX = mPlotWidth - space   // chỉ lấn `space` (=5) px vào plot — đúng bằng bề rộng phần mũi tên của
+                                 // LivePriceBadgePainter (trỏ vào chart, "chạm" đường dashed) — phần
+                                 // THÂN badge còn lại (số giá) nằm hoàn toàn trên price-axis strip.
+```
+
+`verticalTextAlignment: left` không đổi (`offsetX = space`) — không có price-axis strip bên trái để "đẩy ra".
+
+**Padding quanh chữ (trong) VÀ khoảng lấn vào plot (ngoài) đã điều chỉnh** theo các yêu cầu trực tiếp tiếp theo:
+- `_liveBadgePaddingX`/`_liveBadgePaddingY` (padding TRONG, quanh chữ) chốt ở **6** / **4** (từng thử tăng lên 8/5 theo mẫu hình MEXC rồi giảm lại theo yêu cầu tiếp theo).
+- `_liveBadgeSpace` (padding NGOÀI — khoảng badge lấn vào plot khi đóng `right`, hoặc khoảng cách mép khi đóng `left`) chốt ở **5** (từng thử tăng lên 8 rồi revert lại — yêu cầu trực tiếp "nằm ra ngoài cùng và cách 5px thui").
+- Cả 3 hằng số dùng chung giữa `drawNowPrice` và `drawBidAsk` (`flagBadgeWidth`/`flagLeft`) — đổi 1 nơi, tự động khớp cả 2 hàm.
+- **Strip trục giá bên phải cũng rộng ra tương ứng** (yêu cầu "cho axisY rộng ra tí") — xem `BaseChartPainter.updatePriceAxisWidth`: `clamp(maxLabelWidth + 20, 56, 104)` (trước: `+14, 48, 96`), vẫn làm tròn lên bội số 8 + hysteresis y hệt cũ. Xem `CHART_AXES.md` §7.6 (đã cập nhật đồng bộ).
+
+> **Ảnh hưởng dây chuyền tới box Ask/Bid (§5.8):** `drawBidAsk`'s `flagLeft` dùng CHUNG công thức này (đã cập nhật đồng bộ) — nên khi badge dịch ra ngoài, box Ask/Bid (luôn "bám" cạnh badge) cũng dịch theo, tự động tiến gần lại `mPlotWidth`/vùng nến hơn trước. Port PHẢI giữ 2 công thức (`drawNowPrice`'s `offsetX` và `drawBidAsk`'s `flagLeft`) khớp nhau tuyệt đối — lệch 1 trong 2 sẽ làm box và badge không còn khớp cạnh nhau như thiết kế.
+
+**Text hiển thị trong badge giữ nguyên số thập phân đầy đủ** (`NumberUtil.formatFixed(value, fixedLength)`), giống mọi nhãn giá khác — có thử LÀM TRÒN về số nguyên gần nhất theo yêu cầu trực tiếp ở 1 thời điểm, sau đó bị **revert lại** ("revert cái format giá của liveprice không cần phải làm tròn"). Không còn helper `_formatLivePrice`/file test `number_util_test.dart` liên quan — đã xoá cùng lúc revert.
+
 ---
 
-## 7. `KChartController`
+## 6. `KChartController`
 
 File: `lib/renderer/k_chart_controller.dart`. Là `ChangeNotifier`.
 
@@ -667,9 +623,9 @@ void dispose() { ctrl.dispose(); super.dispose(); }
 
 ---
 
-## 8. `KChartStyle` & `KChartColors`
+## 7. `KChartStyle` & `KChartColors`
 
-### 8.1 `KChartStyle`
+### 7.1 `KChartStyle`
 
 | Field               | Default | Ý nghĩa                                         |
 | ------------------- | ------- | ----------------------------------------------- |
@@ -693,7 +649,7 @@ Constructor: `const KChartStyle([List<String>? dateTimeFormat, double volBarOpac
 
 **Lưu ý:** chỉ **2 field** trong bảng trên thực sự truyền được từ ngoài vào — `dateTimeFormat` và `volBarOpacity` (2 tham số duy nhất của constructor). Toàn bộ field còn lại (`topPadding`, `bottomPadding`, `childPadding`, `space`, `pointWidth`, `candleWidth`, `candleLineWidth`, `volWidth`, `crossWidth`, `nowPriceLineWidth`, `borderWidth`, `gridRows`, `gridColumns`) được gán cứng ngay tại khai báo field (không có `this.` trong constructor) — muốn đổi kích thước nến/padding/lưới phải sửa trực tiếp trong `k_chart_style.dart`, không cấu hình được qua constructor.
 
-### 8.2 `KChartColors`
+### 7.2 `KChartColors`
 
 #### `CandleStyle` — main chart (nến hoặc line chart)
 
@@ -704,6 +660,45 @@ Constructor: `const KChartStyle([List<String>? dateTimeFormat, double volBarOpac
 | `kLineColor`       | `0xFF217AFF`         | Đường line chart (`isLine = true`).                              |
 | `kLineFillColors`  | gradient blue        | Gradient tô dưới đường line chart.                               |
 | `textStyle`        | `fontSize: 10`       | Text main chart: trục giá/thời gian, crosshair, label indicator, max/min, now-price. |
+| `bodyStyle`        | `CandleBodyStyle.solid` | Kiểu vẽ thân nến (candlestick mode) — xem ngay dưới.          |
+
+**`CandleBodyStyle`** (`MainRenderer.drawCandle`) — 4 giá trị, giống "Candle style" của TradingView/Binance:
+
+| Giá trị       | Thân nến tô đặc / chỉ viền                              |
+| ------------- | --------------------------------------------------------- |
+| `solid`       | Luôn tô đặc cả 2 chiều (mặc định, hành vi gốc).           |
+| `hollowUp`    | Nến tăng (`close > open` CHÍNH nến đó) chỉ viền, nến giảm vẫn đặc. |
+| `hollowDown`  | Nến giảm chỉ viền, nến tăng vẫn đặc.                      |
+| `hollow`      | Cả 2 chiều đều chỉ viền.                                  |
+
+Bấc nến (high-low) LUÔN vẽ đặc. Khi thân RỖNG, bấc chỉ vẽ 2 đoạn thò ra ngoài
+thân (`high` → đỉnh thân, đáy thân → `low`) — KHÔNG vẽ đoạn cắt ngang ruột
+thân, để thân thực sự rỗng (không có gạch xuyên giữa). Thân rỗng vẽ bằng
+`MainRenderer._hollowBorderPaint` — Paint RIÊNG, luôn `PaintingStyle.stroke`,
+chỉ mutate `.color`/nến — KHÔNG dùng chung `chartPaint` (Paint chính của
+renderer, mặc định fill, dùng cho mọi draw khác kể cả `drawLine` của trend
+line/now-price) để khỏi phải toggle style + reset lại mỗi nến rỗng.
+
+**`CandleBodyStyleX.isHollow({required bool rising})`** (extension trên
+enum `CandleBodyStyle`, cùng file) — nguồn sự thật DUY NHẤT cho "nến chiều
+`rising` có nên vẽ rỗng theo style này", dùng chung bởi `MainRenderer.
+drawCandle` VÀ 2 painter preview dưới đây. Trước đây bị chép tay lặp lại
+switch y hệt ở cả 3 chỗ (đã sửa qua code review — sửa công thức 1 chỗ mà
+quên chỗ khác thì preview lệch hình so với chart thật, không gì bắt được).
+
+Preview UI (không phải core rendering): `CandleStyleIcon` (icon nhỏ) và
+`CandleStylePreview` (preview lớn, nến hoặc line chart trên chuỗi giá tổng
+hợp cố định) ở `lib/styles/candle_style/` — gọi `isHollow` ở trên, không tự
+tính lại. Ví dụ dùng trong `example/lib/main.dart` (`_showSettingsSheet` →
+"Kiểu K-line", 5 lựa chọn: 4 `CandleBodyStyle` + "Đường" ứng với
+`isLine = true`).
+
+**`shouldRepaint` phải so `chartColors.candleStyle.bodyStyle` riêng**
+(`ChartPainter.shouldRepaint`, xem §11) — KHÔNG so nguyên `chartColors`
+(instance mới mỗi build dù nội dung không đổi ở nhiều app, so reference sẽ
+ép repaint mọi build). Thiếu dòng so sánh này (bug thật, đã xảy ra — bắt
+được qua code review) thì đổi `bodyStyle` qua UI không tự vẽ lại ngay, chỉ
+"ăn theo" lần repaint kế tiếp do lý do khác.
 
 #### `VolumeStyle` — panel volume
 
@@ -802,9 +797,9 @@ const KChartColors(
 
 ---
 
-## 9. Indicators — main & secondary
+## 8. Indicators — main & secondary
 
-### 9.1 Hierarchy
+### 8.1 Hierarchy
 
 ```
 IndicatorTemplate<T, K>   ← abstract
@@ -828,7 +823,7 @@ IndicatorTemplate<T, K>   ← abstract
     └── StochRSIIndicator
 ```
 
-### 9.2 Built-in indicators
+### 8.2 Built-in indicators
 
 #### MA — main
 
@@ -908,8 +903,8 @@ IndicatorTemplate<T, K>   ← abstract
   Chikou:          (lastX - shift×pointWidth, curX - shift×pointWidth), y = close  — dịch LÙI
   ```
   Mây (Kumo) tô giữa Span A/B đã dịch; nếu dấu `(spanA-spanB)` đổi giữa `lastPoint`/`curPoint` → tách polygon tại điểm giao (nội suy tuyến tính `t = lastDiff/(lastDiff-curDiff)`), tô 2 nửa 2 màu (`cloudUpColor`/`cloudDownColor`) — không tách sẽ tô sai màu cả đoạn giao nhau.
-- **`futureShift`:** `IchimokuIndicator.futureShift = shift` — indicator đầu tiên trong thư viện khai báo giá trị này (`MainIndicator.futureShift` mặc định `0`, no-op cho mọi indicator khác). Kích hoạt cơ chế mở rộng trục X ở [12](#12-renderer-internals) mục "Vùng tương lai" — chart tự chừa `shift` nến trống bên phải nến cuối để mây không bị cắt cụt, tự mở rộng biên scroll/zoom tương ứng.
-- **Lưu ý:** với chart `itemCount < 52` (chưa đủ nến cho Span B), các field vẫn `null` đúng vị trí warm-up thay vì sentinel `0` — không vẽ đường/mây rác kéo về 0. Crosshair/tap-selection bị clamp về nến thật đang hiển thị, KHÔNG cho chọn vào vùng tương lai trống (đơn giản hoá có chủ đích, xem `ichimoku.md` §7 mục 4 ở root repo).
+- **`futureShift`:** `IchimokuIndicator.futureShift = shift` — indicator đầu tiên trong thư viện khai báo giá trị này (`MainIndicator.futureShift` mặc định `0`, no-op cho mọi indicator khác). Kích hoạt cơ chế mở rộng trục X ở [11](#11-renderer-internals) mục "Vùng tương lai" — chart tự chừa `shift` nến trống bên phải nến cuối để mây không bị cắt cụt, tự mở rộng biên scroll/zoom tương ứng.
+- **Lưu ý:** với chart `itemCount < 52` (chưa đủ nến cho Span B), các field vẫn `null` đúng vị trí warm-up thay vì sentinel `0` — không vẽ đường/mây rác kéo về 0. Crosshair/tap-selection bị clamp về nến thật đang hiển thị, KHÔNG cho chọn vào vùng tương lai trống (đơn giản hoá có chủ đích, xem mục Ichimoku ở `indicator.md` ở root repo).
 
 #### MACD — secondary
 
@@ -1047,7 +1042,7 @@ IndicatorTemplate<T, K>   ← abstract
 - **Công dụng:** đo độ biến động (volatility), không đo hướng. ATR cao = nến dao động rộng (biến động mạnh); ATR thấp = thị trường yên tĩnh. Không phải chỉ báo xu hướng — dùng để đặt stop-loss theo biến động thực tế hoặc điều chỉnh kích thước vị thế.
 - **Lưu ý:** `TR` tại nến đầu tiên (`i=0`) không có `prevClose` nên chỉ dùng `high-low`; `ATR` bắt đầu có giá trị từ `i=N-1` (seed bằng SMA của N giá trị TR đầu, không phải Wilder smoothing ngay từ đầu) — cùng convention warm-up như RSI.
 
-### 9.3 Custom indicator
+### 8.3 Custom indicator
 
 ```dart
 class MyIndicator extends MainIndicator<CandleEntity, MyStyle> {
@@ -1070,7 +1065,7 @@ class MyIndicator extends MainIndicator<CandleEntity, MyStyle> {
 }
 ```
 
-### 9.4 Pattern thêm secondary indicator mới
+### 8.4 Pattern thêm secondary indicator mới
 
 ```
 1. Tạo lib/entity/<name>_entity.dart
@@ -1085,9 +1080,9 @@ class MyIndicator extends MainIndicator<CandleEntity, MyStyle> {
 
 ---
 
-## 10. `DataUtil` & helpers
+## 9. `DataUtil` & helpers
 
-### 10.1 `DataUtil`
+### 9.1 `DataUtil`
 
 | Method                                          | Effect                                                                      |
 | ----------------------------------------------- | --------------------------------------------------------------------------- |
@@ -1098,14 +1093,14 @@ class MyIndicator extends MainIndicator<CandleEntity, MyStyle> {
 
 **Quan trọng:** Khi load thêm data cũ (left), phải merge list rồi gọi `calculateAll` LẠI trên list mới — indicator phụ thuộc vào toàn bộ historical data.
 
-### 10.2 `NumberUtil`
+### 9.2 `NumberUtil`
 
 | Method                                     | Ví dụ                                |
 | ------------------------------------------ | ------------------------------------ |
 | `NumberUtil.format(value, precision)`      | Format tự động (loại trailing zero). |
 | `NumberUtil.formatFixed(value, precision)` | Fix precision (giữ trailing zero).   |
 
-### 10.3 Date format
+### 9.3 Date format
 
 `dateFormat(DateTime, List<String> tokens)` — tokens trong `date_format_util.dart`:
 
@@ -1120,24 +1115,35 @@ class MyIndicator extends MainIndicator<CandleEntity, MyStyle> {
 
 **Cache label ngày (`ChartPainter.getDate`):** kết quả `dateFormat()` được cache trong `static Map<int, String> _dateStringCache` (key = timestamp) để tránh format lại mỗi frame. Cache bị clear khi `mFormats` đổi — so sánh **theo nội dung** (`_formatsEqual`, so từng phần tử), KHÔNG theo reference, vì `initFormats()` gán 1 list literal mới mỗi lần `ChartPainter` được dựng lại (mỗi build) dù nội dung format không đổi; so theo reference sẽ khiến cache bị xoá gần như mỗi frame và mất tác dụng.
 
-### 10.4 Auto-detect time format & grid alignment
+### 9.4 Time-tick planner & price ticks (trục X/Y)
 
-`initFormats()` trong `BaseChartPainter` tự chọn format **và** override `mGridColumns` dựa vào khoảng cách giữa 2 candle đầu:
+> **Thay thế hoàn toàn** cơ chế cũ ("Auto-detect time format & grid alignment" — chia đều `mGridColumns` cột, format chọn theo khoảng cách 2 candle đầu). Bản cũ có 1 nhược điểm cố hữu: số lượng/vị trí label KHÔNG đổi theo `barSpacing` (zoom) trong 1 phiên — chỉ đổi khi `ChartPainter` được dựng lại với data mới. Bản mới (theo `CHART_AXES.md`, spec tự chứa — đọc file đó nếu cần công thức chính xác) tính lại tick **mỗi frame** theo đúng mức zoom hiện tại. `mGridColumns`/`gridColumns` không còn quyết định gì cho trục thời gian nữa.
 
-| Khoảng cách          | Format        | `mGridColumns`           | Số mốc |
-| -------------------- | ------------- | ------------------------ | ------ |
-| ≥ 28 ngày (monthly)  | `yy-MM`       | 4                        | 5      |
-| ≥ 1 ngày (daily)     | `yy-MM-dd`    | 4                        | 5      |
-| Intraday (phút/giờ)  | `MM-dd HH:mm` | 3                        | 4      |
-| < 2 items (fallback) | `MM-dd HH:mm` | — (giữ từ `KChartStyle`) | —      |
+**Trục X — `lib/utils/time_ticks.dart`, gọi từ `BaseChartPainter._updateTimeTicks()` (trong `calculateValue()`, 1 lần/frame):**
 
-**Grid-time alignment:** `drawDate()` vẽ label tại đúng vị trí `columnSpace * i` (`i = 0..mGridColumns`) — trùng khớp với vị trí `drawGrid()` vẽ đường dọc. Mỗi đường grid dọc ứng đúng 1 time label bên dưới.
+1. **Tick weight** (`KLineEntity.tickWeight`, cache 1 lần lúc load/append, KHÔNG tính lại mỗi frame): mỗi nến được gán 1 trong 12 bậc `MINOR..YEAR` dựa trên việc timestamp (local time) có rơi đúng ranh giới lịch không (`alignmentWeight`), cộng thêm `crossingWeight` (bắt case nến không thẳng hàng ranh giới local — vd nến 4h ở GMT+7 rơi 03:00/07:00/11:00, không có `hour==0`).
+2. **Threshold** (`thresholdRung`): suy TRỰC TIẾP từ hình học (`barSpacing`, `interval`) — KHÔNG đếm số nến hiển thị (đếm sẽ dao động ±1 khi pan, gây nhấp nháy).
+3. **Kế hoạch** (`buildTimeTickPlan`, cache qua `TimeTickPlanner` — instance sở hữu bởi `_KChartWidgetState`, key `(identityHashCode(candles), count, barSpacing.round(), interval, format)`): lọc ứng viên qua threshold, đóng gói theo `MIN_GAP_X=64px` trên **absolute space** (`absX(i) = i*barSpacing + barSpacing/2`, KHÔNG trừ `scrollOffset`) — pan không đổi tick nào được chọn (invariant I4). Ưu tiên weight cao trước (đảm bảo ranh giới ngày thắng nến intraday), tie-break theo index. Key có `identityHashCode` để đổi symbol/timeframe (data khác) không tái dùng nhầm plan cũ; `barSpacing` làm tròn px CHỈ trong key (giá trị build thật vẫn chính xác) để pinch-zoom không rebuild toàn dataset gần như mỗi frame.
+4. **Chiếu mỗi frame** (`_updateTimeTicks`): lọc lại theo pixel `x = translateXtoX(getX(index)) ∈ [0, mPlotWidth]` — KHÔNG theo margin index, xem fix "label dính cứng ở mép" trong Unreleased.
+5. **Label text** — `_updateTimeTicks()` truyền `forcedFormat` cho `TimeTickPlanner`, ưu tiên theo thứ tự: `KChartStyle.dateTimeFormat` (consumer tự set) → `mFormats` (mặc định HIỆN TẠI — format CỐ ĐỊNH suy 1 lần từ khoảng cách 2 nến đầu qua `initFormats()`, xem [11](#11-renderer-internals) "Vùng tương lai" phía trên nó). `_labelFor`'s nhánh thích ứng theo `tickWeight` từng tick (`YEAR→"2026"`, `MONTH→"Aug"`, `DAY→"10"`, còn lại→`"09:05"`) CHỈ chạy khi `forcedFormat == null` — tức hiện tại KHÔNG bao giờ null (luôn có `mFormats` fallback) nên nhánh thích ứng này hiện không active, dù code vẫn còn nguyên. Ép qua `KChartWidget.timeFormat`/`KChartStyle.dateTimeFormat` vẫn hoạt động như mô tả ở [5.7](#57-timeformat-constants--ép-format-nhãn-trục-thời-gian), chỉ là thắng `mFormats` chứ không phải thắng "không có gì".
 
-> `mGridColumns` được `initFormats()` override, thắng giá trị `gridColumns = 6` mặc định trong `KChartStyle`. `KChartStyle.gridColumns` chỉ có tác dụng khi `datas < 2` hoặc khi truyền `dateTimeFormat` custom (không qua auto-detect).
+Kết quả cache vào `BaseChartPainter.mTimeTicks` (`List<({int index, double x, String label})>`) — `drawGrid()` (đường dọc, dùng chung cho main/vol/secondary) VÀ `drawDate()` (label) đều đọc TỪ ĐÂY, không renderer nào tự chọn tick riêng (invariant I3/I6).
+
+**Trục Y — `lib/utils/price_ticks.dart`, gọi từ `MainRenderer` constructor (mỗi frame, renderer bị dựng lại mỗi lần `initChartRenderer()`):**
+
+```dart
+niceStep(range, targetTicks)   // ladder 1·2·2.5·5·10 × 10^n
+decimalsFor(step)              // KHÔNG suy từ magnitude — sai với họ step 2.5
+priceTicks(minPrice: ..., maxPrice: ..., height: ..., targetTicks: 6)
+```
+
+Range đưa vào `priceTicks()` là range giá **THỰC SỰ đang hiển thị** (`MainRenderer._priceAtScreenY(chartRect.top/bottom)` — nghịch đảo transform canvas `scaleY`/`offsetY` thật, không phải `minValue`/`maxValue` auto-scale gốc) — nếu dùng range gốc, zoom Y (gesture kéo dọc) sẽ khiến hầu hết tick dạt ra ngoài view (xem fix trong Unreleased). Grid ngang + độ rộng strip giá (`priceAxisWidth`, [11](#11-renderer-internals) "Price axis strip") đều ăn theo cùng `_priceTicks` này.
+
+**Test:** `test/time_ticks_test.dart` (T1-T5: never-blank, min-gap, no-dup-label, pan-stability, append-stability), `test/price_ticks_test.dart` (T6-T7: price ticks trong range, decimals đúng cho họ 2.5) — chạy `flutter test` ở root repo.
 
 ---
 
-## 11. `DepthChart` — orderbook depth
+## 10. `DepthChart` — orderbook depth
 
 File: `lib/depth_chart.dart`. Widget độc lập với `KChartWidget`.
 
@@ -1185,25 +1191,34 @@ DepthChart(
 
 ---
 
-## 12. Renderer internals
+## 11. Renderer internals
 
-### Layout dọc
+### Layout dọc + ngang (price axis strip, CHART_AXES.md §7)
+
+Layout giờ 2 chiều — dọc như trước (main/vol/secondary/date), NHƯNG mỗi rect chỉ rộng `mPlotWidth`, phần còn lại bên phải (`mPlotWidth..mWidth`) là 1 cột riêng dùng chung cho label giá của MỌI panel:
 
 ```
-┌───────────────────────────────────────────┐
-│  mTopPadding (chartStyle.topPadding + N×12) │ ← N main indicators
-├───────────────────────────────────────────┤
-│              mMainRect                    │ candles + main indicators
-├───────────────────────────────────────────┤
-│  mVolRect   (mVolumeHeight)               │ vol panel (null nếu volHidden)
-├───────────────────────────────────────────┤
-│  mSecondaryRectList[0]                    │ MACD
-├───────────────────────────────────────────┤
-│  mSecondaryRectList[1]                    │ RSI
-├───────────────────────────────────────────┤
-│  mDateRect  (chartStyle.bottomPadding)    │ trục thời gian (đáy cùng)
-└───────────────────────────────────────────┘
+        0                                          mPlotWidth      mWidth
+        ┌──────────────────────────────────────────────┬──────────────┐
+        │  mTopPadding                                  │              │
+        ├────────────────────────────────────────────── │              │
+        │              mMainRect                        │              │
+        ├────────────────────────────────────────────── │              │
+        │  mVolRect   (null nếu volHidden)              │  mPriceAxisRect
+        ├────────────────────────────────────────────── │  (label giá của
+        │  mSecondaryRectList[0]                        │   main/vol/     │
+        ├────────────────────────────────────────────── │   secondary,    │
+        │  mSecondaryRectList[1]                        │   cùng 1 cột)   │
+        ├──────────────────────────────────────────────┼──────────────┤
+        │  mDateRect  (rộng = mPlotWidth, KHÔNG mWidth)  │  mCornerRect │
+        └──────────────────────────────────────────────┴──────────────┘
 ```
+
+- `mPlotWidth = max(1, mWidth - priceAxisWidth)`. `priceAxisWidth` đọc từ `priceAxisWidthCache.value` (instance `PriceAxisWidthCache`, sở hữu bởi `_KChartWidgetState`, truyền vào painter qua constructor — **không phải `static`**; đổi lại sau code review vì `static` khiến nhiều `KChartWidget` đồng thời rò rỉ layout vào nhau, xem Unreleased) — tự đo theo label rộng nhất của `MainRenderer` — clamp `[48,96]`, làm tròn bội 8, hysteresis (chỉ thu khi thấp hơn hẳn 1 bậc, chống vòng lặp phản hồi width→layout→label→width). Đo/cập nhật ở CUỐI `initChartRenderer()` (gọi `updatePriceAxisWidth()`, giờ là instance method), áp dụng cho FRAME SAU (trễ đúng 1 frame — phá vòng lặp tự tham chiếu mà không cần biết trước độ rộng label).
+- `mCornerRect` (góc dưới-phải, giao strip giá × trục thời gian) — không thuộc trục nào, chỉ tô nền (`drawBg`) để 2 đường phân cách kết thúc gọn.
+- 2 đường phân cách khung (`ChartPainter._drawAxisSeparators`, vẽ trong `drawGrid()`): dọc tại `x=mPlotWidth` (cao hết plot+strip giá+trục thời gian), ngang tại đỉnh `mDateRect` (rộng hết `mWidth`).
+- `VolRenderer`/`SecondaryRenderer`/`MainRenderer` đều nhận thêm `priceAxisRect` (constructor) — vẽ label giá vào ĐÓ thay vì đè lên nội dung panel như trước. 13 file indicator (MACD/KDJ/RSI/...) không sửa gì — `SecondaryRenderer.drawVerticalText` dùng `canvas.translate(priceAxisRect.left, 0)` để công thức `chartRect.width - x` sẵn có của chúng (giả định local x=0) vẫn đúng dù `priceAxisRect.left != 0`.
+- Crosshair (`drawCrossLineText`) là layer DUY NHẤT không bị giới hạn `mPlotWidth` — vẫn dùng `mWidth`, vì readout label của nó CỐ Ý tràn vào cả strip giá lẫn trục thời gian (CHART_AXES.md §7.5).
 
 ### Tọa độ X
 
@@ -1213,6 +1228,10 @@ xToTranslateX(x)    = -mTranslateX + x / scaleX
 indexOfTranslateX() = binary search trên getX(i)
 translateXtoX(tx)   = (tx + mTranslateX) * scaleX
 ```
+
+`mStartIndex`/`mStopIndex` (viewport thô, xem bảng 3-phạm-vi bên dưới) tính qua `xToTranslateX(0)`/`xToTranslateX(mPlotWidth)` — **`mPlotWidth`, không phải `mWidth`** (dùng `mWidth` sẽ tính dư index vào phần bị strip giá che khuất, làm lệch auto-scale giá).
+
+**Tick trục X thật sự hiển thị** (`mTimeTicks`, `List<({int index, double x, String label})>`) tính trong `calculateValue()` qua `BaseChartPainter._updateTimeTicks()` — thuật toán weight-ladder đầy đủ ở [9.4](#94-time-tick-planner--price-ticks-trục-xy) + `CHART_AXES.md` §5. `drawGrid()`/`drawDate()` chỉ đọc từ đây, không tự chọn tick.
 
 ### Tọa độ Y
 
@@ -1229,9 +1248,11 @@ double _applyScaleY(double rawY) {
 }
 ```
 
+`_applyScaleY` dùng cho label vẽ ngoài canvas transform (nowPrice, maxMin, crosshair). `MainRenderer` có bản NGHỊCH ĐẢO riêng, `_priceAtScreenY(yScreen)` — suy giá TẠI 1 toạ độ Y màn hình, dùng để tính range giá đang thực sự hiển thị rồi sinh tick nice-number theo đó (xem [9.4](#94-time-tick-planner--price-ticks-trục-xy)). 2 hàm này là nghịch đảo của nhau về mặt toán học (cùng công thức `centerY + (v-centerY)*scaleY + offsetY`, chỉ khác `centerY` là `(mMainRect.top+bottom)/2` hay `scaleCenterY` truyền vào — thực chất là 1).
+
 ### Vùng tương lai (future zone) — indicator dịch trục (Ichimoku)
 
-Thêm khi implement Ichimoku ([9.2](#92-built-in-indicators)) — cơ chế dùng chung, không hardcode riêng cho 1 indicator. Bất kỳ `MainIndicator` nào override `futureShift` (mặc định `0`) đều tự động được renderer chừa chỗ:
+Thêm khi implement Ichimoku ([8.2](#82-built-in-indicators)) — cơ chế dùng chung, không hardcode riêng cho 1 indicator. Bất kỳ `MainIndicator` nào override `futureShift` (mặc định `0`) đều tự động được renderer chừa chỗ:
 
 ```dart
 mFutureSlots = max(futureShift trên toàn bộ mainIndicators đang bật)   // 0 nếu không indicator nào cần
@@ -1263,17 +1284,21 @@ static double effectiveRightPaddingPx(double xFrontPadding, double chartWidth) {
 }
 
 double getMinTranslateX() {
-  final paddingData = effectiveRightPaddingPx(xFrontPadding, mWidth) / scaleX;
-  var x = -mDataLen + mWidth / scaleX - mPointWidth / 2 - paddingData;
+  // mPlotWidth, không phải mWidth — nến cuối phải cách MÉP PLOT (không phải
+  // mép strip giá) đúng khoảng padding này.
+  final paddingData = effectiveRightPaddingPx(xFrontPadding, mPlotWidth) / scaleX;
+  var x = -mDataLen + mPlotWidth / scaleX - mPointWidth / 2 - paddingData;
   return x >= 0 ? 0.0 : x;
 }
 ```
 
-| `mWidth` (xFrontPadding=100) | Padding màn hình |
-| ---------------------------- | ---------------- |
-| ≥ 375px                      | 100px            |
-| 250px                        | ~67px            |
-| 187px                        | ~50px            |
+| `mPlotWidth` (xFrontPadding=40, default hiện tại) | Padding màn hình |
+| --------------------------------- | ---------------- |
+| ≥ 375px                           | 40px             |
+| 250px                              | ~27px            |
+| 187px                              | ~20px            |
+
+> Trước khi có strip giá, hàm này dùng thẳng `mWidth` (= `mPlotWidth` lúc đó vì chưa có strip). `effectiveRightPaddingPx` vẫn còn dùng nguyên cho mục đích này; nó KHÔNG còn quyết định bề rộng vùng gesture scaleY nữa — xem [12.3](#123-scale).
 
 ### `KChartScaleState`
 
@@ -1298,21 +1323,22 @@ class KChartScaleState {
 
 ```
 paint()
-├── initRect()
-├── calculateValue()
-├── initChartRenderer()
-├── drawBg()
-├── drawGrid()
+├── (§7.8) return sớm nếu size.width/height <= 0 — không vẽ garbage vào Rect âm
+├── initRect()           → mPlotWidth (theo priceAxisWidth cache TỪ FRAME TRƯỚC), mMainRect/mVolRect/mSecondaryRectList/mDateRect (rộng = mPlotWidth), mPriceAxisRect, mCornerRect
+├── calculateValue()     → mStartIndex/mStopIndex (theo mPlotWidth), max/min, mTimeTicks (weight-ladder planner)
+├── initChartRenderer()  → dựng renderer (nhận priceAxisRect) rồi ĐO LẠI label rộng nhất → BaseChartPainter.updatePriceAxisWidth() cho FRAME SAU
+├── drawBg()              (phủ cả strip giá + ô góc chết, không riêng mPlotWidth)
+├── drawGrid()             (theo mTimeTicks + _priceTicks mỗi panel) + 2 đường phân cách khung
 ├── drawChart()
 │   ├── canvas transform (scaleX, translateX)
 │   ├── canvas transform (scaleY, offsetY) → clip mMainRect
 │   │   ├── MainRenderer.drawChart()
 │   │   └── VolRenderer.drawChart()    ← ngoài scaleY scope
 │   └── SecondaryRenderer.drawChart()  ← ngoài scaleY scope
-├── drawVerticalText()
-├── drawDate()
+├── drawVerticalText()    (vẽ vào mPriceAxisRect, không đè lên nội dung panel)
+├── drawDate()             (clip canvas theo mPlotWidth — label trượt/cắt tự nhiên như nến, không kẹp)
 ├── drawText()          ← dùng getItem(mStopIndex) không phải datas!.last
-├── drawMaxAndMin()
+├── drawMaxAndMin()        (flip trái/phải theo mPlotWidth/2, không phải mWidth/2)
 └── drawNowPrice()      ← dùng livePrice nếu có, fallback datas!.last.close
 ```
 
@@ -1333,9 +1359,13 @@ livePrice     ← bắt buộc vì livePrice nằm trong ChartPainter, không ph
 isTrendLine
 selectY
 lines         ← so sánh THEO GIÁ TRỊ (_trendLinesEqual), KHÔNG theo reference
+chartColors.candleStyle.bodyStyle   ← so field CỤ THỂ, KHÔNG so nguyên chartColors
+                                       (instance mới mỗi build ở nhiều app dù nội
+                                       dung không đổi — so reference sẽ ép repaint
+                                       mọi build, phản tác dụng)
 ```
 
-**Quy tắc:** nếu thêm field mới vào `ChartPainter`/`BaseChartPainter` mà ảnh hưởng visual → phải thêm vào `shouldRepaint`, nếu không chart sẽ không cập nhật (đã xảy ra thật với `isLine`, `isTrendLine`/`selectY`/`lines` — xem changelog).
+**Quy tắc:** nếu thêm field mới vào `ChartPainter`/`BaseChartPainter` mà ảnh hưởng visual → phải thêm vào `shouldRepaint`, nếu không chart sẽ không cập nhật (đã xảy ra thật với `isLine`, `isTrendLine`/`selectY`/`lines`, và `chartColors.candleStyle.bodyStyle` — xem changelog). Field nào nằm TRONG `chartColors` (hay bất kỳ object phức hợp nào được dựng mới mỗi build) mà cần theo dõi → so field CỤ THỂ đó (theo giá trị), không so nguyên object cha theo reference.
 
 **Bẫy `!=` trên field bị mutate in-place:** `lines` (`List<TrendLine>`) bị `KChartWidget` sửa in-place (`lines.add(...)`, `lines.removeLast()`) rồi truyền cùng reference vào `ChartPainter` mỗi build → `oldDelegate.lines` và `lines` LUÔN là cùng 1 object, so sánh `!=` không bao giờ đúng dù nội dung đã đổi. Cách sửa đúng — áp dụng cùng nguyên tắc với `datas`/`livePrice`:
 
@@ -1387,33 +1417,35 @@ if (_lastRender == null || now - _lastRender! > 16) {
 
 ---
 
-## 13. Gesture model
+## 12. Gesture model
 
-### 13.1 Single tap
+### 12.1 Single tap
 
 - Trong main rect: toggle crosshair.
 - `isTrendLine: true`: tap = record điểm cho trend line.
 
-### 13.2 Long press
+### 12.2 Long press
 
 - Hiện crosshair + drag để di chuyển.
 - Phát `InfoWindowEntity` qua stream → `detailBuilder` render dialog.
 
-### 13.3 Scale
+### 12.3 Scale
 
 `onScaleStart` chốt 2 cờ:
 
-- `_isScaleYGesture`: 1 ngón + drag dọc trong vùng phải (`effectiveRightPaddingPx`) → scaleY.
+- `_isScaleYGesture`: 1 ngón + chạm trong vùng phải rộng `BaseChartPainter.priceAxisWidth` (**không còn** `effectiveRightPaddingPx`/`xFrontPadding` — đó là padding sau nến cuối, không liên quan tới strip giá; đổi khi thêm price axis strip, xem Unreleased) → scaleY.
 - `_gestureInMain`: `painter.isInMainRect(localFocalPoint)`. Nếu **false** (vol/secondary/date), chỉ scroll X, forward dy cho outer scroll.
 
-`onScaleUpdate` — 4 nhánh khi `_gestureInMain == true`:
+> **Bẫy:** từ khi có strip giá riêng, `mMainRect` không còn phủ hết chiều rộng — chạm strip giá TRONG hàng main cũng khiến `isInMainRect` trả `false`. `onScaleUpdate` phải loại trừ rõ `_isScaleYGesture` khỏi điều kiện `!_gestureInMain` (đã fix), nếu không gesture scaleY hợp lệ trên strip bị nhánh "outside main" nuốt mất, biến thành forward-outer-scroll sai.
+
+`onScaleUpdate` — 4 nhánh khi `_gestureInMain == true` **hoặc** `_isScaleYGesture == true`:
 
 | Điều kiện                         | Hành vi                                                            |
 | --------------------------------- | ------------------------------------------------------------------ |
 | `_dragStartedInTapMode` && 1 ngón | Di chuyển crosshair.                                               |
 | `_isScaleYGesture` && 1 ngón      | `mScaleY -= delta * 0.005`, clamp `[0.3, 5.0]`.                    |
 | `details.scale != 1.0` (≥2 ngón)  | `mScaleX = lastScale * scale`, clamp.                              |
-| 1 ngón drag tự do                 | `mScrollX += dx / mScaleX`. Pan Y chỉ active khi `mScaleY != 1.0`. |
+| 1 ngón drag tự do                 | `mScrollX += dx / mScaleX`, clamp `[ChartPainter.minScrollX, ChartPainter.maxScrollX]` (không còn `[0, maxScrollX]` — xem §12.10). Pan Y chỉ active khi `mScaleY != 1.0`. |
 
 **Gesture gate vol/secondary:**
 
@@ -1424,7 +1456,7 @@ Finger chạm vol/secondary + 1 ngón:
 Pinch ≥2 ngón: scaleX bình thường
 ```
 
-### 13.4 Clamp `mOffsetY`
+### 12.4 Clamp `mOffsetY`
 
 ```dart
 double _clampOffsetY(double v) {
@@ -1433,7 +1465,7 @@ double _clampOffsetY(double v) {
 }
 ```
 
-### 13.5 Overscroll handoff
+### 12.5 Overscroll handoff
 
 ```dart
 // Trong KChartWidget — detect overscroll
@@ -1448,15 +1480,15 @@ if (mScaleY != 1.0) {
 
 **Quy ước dấu:** `delta > 0` = finger drag DOWN (chart ở biên +max); `delta < 0` = finger drag UP.
 
-### 13.6 Double-tap (vùng phải scaleY)
+### 12.6 Double-tap (vùng phải scaleY)
 
-Double-tap → reset `mScaleY = 1.0`, `mOffsetY = 0.0`.
+Double-tap trong cùng vùng `priceAxisWidth` ở trên → reset `mScaleY = 1.0`, `mOffsetY = 0.0`.
 
-### 13.7 Fling
+### 12.7 Fling
 
 Sau drag end, animation Tween chạy với `flingTime` ms, `flingCurve`, `flingRatio` × velocity.
 
-### 13.8 Auto-compensate scroll khi append nến mới
+### 12.8 Auto-compensate scroll khi append nến mới
 
 ```dart
 void _compensateScrollOnDataChange(KChartWidget oldWidget) {
@@ -1470,7 +1502,7 @@ void _compensateScrollOnDataChange(KChartWidget oldWidget) {
 }
 ```
 
-### 13.9 Auto-load khi data chưa lấp đầy chart (không cần gesture)
+### 12.9 Auto-load khi data chưa lấp đầy chart (không cần gesture)
 
 Các trigger `onLoadMore` khác (13.7 fling, `onScaleUpdate`/`onScaleEnd`) chỉ chạy khi user thực hiện gesture. Nếu data ban đầu (hoặc sau khi load thêm vẫn) chưa đủ lấp đầy chiều rộng chart — `ChartPainter.maxScrollX <= 0` — và user chưa tương tác gì, `onLoadMore` sẽ **không bao giờ** được gọi, chart đứng im thiếu data (fix trong 1.0.1).
 
@@ -1511,11 +1543,42 @@ void _maybeLoadMoreForNarrowData() {
 - **`_narrowLoadRequestedForLength` (dedupe guard)**: `didUpdateWidget` fire trên **mọi** rebuild của parent, kể cả những rebuild không liên quan tới `datas` (đổi theme, đổi style...). Nếu không có guard này, mỗi rebuild trong lúc `isLoadingMore` chưa kịp được parent set `true` (thường bất đồng bộ, sau khi await API) sẽ gọi lại `onLoadMore(true)` → spam nhiều request trùng. Guard chỉ cho phép request lại khi `data.length` thực sự thay đổi so với lần request gần nhất.
 - **Giới hạn đã biết**: `ChartPainter.maxScrollX` là field `static`, dùng chung cho **mọi instance** `KChartWidget` trong app. Nếu có nhiều chart cùng render trong 1 frame (multi-chart view), giá trị đọc được trong `addPostFrameCallback` có thể là của chart khác paint sau cùng trong frame đó, không phải của chính widget này. Không ảnh hưởng nếu app chỉ hiển thị 1 chart tại 1 thời điểm.
 
+### 12.10 Overscroll bên phải — `xOverscrollPadding` (giống Binance/MEXC)
+
+File: `lib/renderer/base_chart_painter.dart` (`minScrollX`, `calculateValue`), `lib/k_chart_widget.dart` (mọi nơi clamp `mScrollX`).
+
+Từ trước, `scrollX` luôn bị chặn cứng ở `[0, maxScrollX]` — `0` là vị trí nghỉ mặc định (nến cuối cách mép plot đúng `xFrontPadding`), không cho kéo QUÁ vị trí đó. Giờ có thêm `BaseChartPainter.minScrollX` (static, cùng vòng đời `maxScrollX` — set lại mỗi `calculateValue()`):
+
+```dart
+minScrollX = min(0.0, -(effectiveRightPaddingPx(xOverscrollPadding, mPlotWidth) / scaleX));
+```
+
+- Dùng lại NGUYÊN `effectiveRightPaddingPx` (đã có sẵn cho `xFrontPadding`, §5.2) — overscroll co giãn theo bề rộng chart hẹp giống hệt cách `xFrontPadding` co giãn.
+- `xOverscrollPadding = 0` (mặc định ở `BaseChartPainter`/`ChartPainter` khi dựng trực tiếp, không qua `KChartWidget`) → `minScrollX = 0` → **không đổi hành vi cũ**.
+- `KChartWidget.xOverscrollPadding` mặc định `200` (từng là `150`, tăng thêm theo yêu cầu trực tiếp) — luôn bật ở tầng widget.
+- `min(0.0, ...)`: chốt cứng tại NGUỒN, không phụ thuộc `xOverscrollPadding` không âm. Lý do: nếu `xOverscrollPadding` bị truyền ÂM (dùng sai, không có validate) VÀ `maxScrollX <= 0` (chart không có gì để scroll — data ít, vừa hết màn hình), biểu thức phía trong CÓ THỂ ra số DƯƠNG, làm `minScrollX > maxScrollX` — mọi `.clamp(minScrollX, maxScrollX)` trong `k_chart_widget.dart` (2 chỗ `onScaleUpdate`, 1 chỗ khôi phục `chartScale`, 1 chỗ fling animation) ném `ArgumentError` (`min > max`), crash cả widget. Phát hiện + reproduce qua `/code-review`, sửa bằng `min(0.0, ...)` ngay tại nguồn thay vì sửa từng chỗ gọi `.clamp`.
+
+**Mọi nơi trong `k_chart_widget.dart` từng clamp `mScrollX` vào `[0, maxScrollX]` đổi thành `[minScrollX, maxScrollX]`:** 2 nhánh `onScaleUpdate` (§12.3), khôi phục `chartScale` (`_restoreChartScaleFromWidget`, §13.8 — cả 2 pha, xem `architecture.md` §6.13 cho chi tiết cơ chế 2 pha), và điều kiện dừng fling animation (§12.7 — `mScrollX <= 0` → `mScrollX <= minScrollX`).
+
+**Không có snap-back/elastic:** kéo quá vị trí nghỉ, thả tay ra → **giữ nguyên** vị trí đã kéo (kể cả fling văng quá mức cho phép — dừng cứng ngay tại `minScrollX`, không bật lại). Muốn về lại vị trí nghỉ thì user tự kéo ngược. Đây là quyết định thiết kế xác nhận trực tiếp — khác hẳn overscroll kiểu iOS (rubber-band tự bật về).
+
+**An toàn index khi `scrollX` âm** (vùng `translateX` trước đây chưa từng đạt tới): đã audit `indexOfTranslateX` (binary search tự bão hoà trong `[0, mItemCount+mFutureSlots-1]`, không thể trả về ngoài dải) và mọi chỗ dùng `mStartIndex`/`mStopIndex` sau đó (đều có `min`/`max` clamp lại) — không có rủi ro out-of-bounds. Port sang platform khác PHẢI đảm bảo tương đương: index/binary-search tự bão hoà, không throw khi `translateX` vượt xa biên đã biết trước đây.
+
+### 12.11 Giảm khoảng trống nghỉ mặc định — `xFrontPadding` 100 → 40
+
+Theo yêu cầu trực tiếp ("chart có 1 khoảng cách... muốn nhỏ lại gần với axis Y"): `KChartWidget.xFrontPadding` mặc định giảm từ `100` xuống `40` — vị trí nghỉ mặc định lúc mới mở chart (chưa scroll gì) có nến cuối nằm GẦN trục giá hơn nhiều so với trước.
+
+An toàn để giảm mà không cần đổi gì khác, vì 2 lý do:
+1. Badge now-price (§5.9) giờ đặt CHỦ YẾU trên price-axis strip, chỉ lấn `~8px` vào plot — không còn phụ thuộc `xFrontPadding` lớn để tránh đè nến cuối như thiết kế cũ (badge cũ từng nằm gọn trong plot, cần nhiều khoảng trống hơn).
+2. `xOverscrollPadding` (§12.10, mặc định `200`, luôn bật) đã tách riêng "khoảng trống user CÓ THỂ tự kéo ra thêm" khỏi "khoảng trống mặc định lúc nghỉ" — muốn lộ thêm khoảng trống thì user tự kéo, không cần `xFrontPadding` lớn sẵn.
+
+Không đổi công thức `effectiveRightPaddingPx`/`getMinTranslateX` (mục "Padding phải tỷ lệ" ở §11) — chỉ đổi GIÁ TRỊ mặc định truyền vào.
+
 ---
 
-## 14. Recipes — công thức thường dùng
+## 13. Recipes — công thức thường dùng
 
-### 14.1 Live tick
+### 13.1 Live tick
 
 ```dart
 void onTick(double newClose) {
@@ -1535,7 +1598,7 @@ void onTick(double newClose) {
 }
 ```
 
-### 14.2 Load more khi scroll trái
+### 13.2 Load more khi scroll trái
 
 ```dart
 KChartWidget(
@@ -1557,7 +1620,7 @@ KChartWidget(
 )
 ```
 
-### 14.3 Dark theme
+### 13.3 Dark theme
 
 ```dart
 KChartColors(
@@ -1573,7 +1636,7 @@ KChartColors(
 )
 ```
 
-### 14.4 Toggle nhiều secondary
+### 13.4 Toggle nhiều secondary
 
 ```dart
 List<SecondaryIndicator> get _secondary => [
@@ -1583,7 +1646,7 @@ List<SecondaryIndicator> get _secondary => [
 ];
 ```
 
-### 14.5 Custom date format
+### 13.5 Custom date format
 
 ```dart
 KChartWidget(
@@ -1594,7 +1657,7 @@ KChartWidget(
 )
 ```
 
-### 14.6 Watermark logo
+### 13.6 Watermark logo
 
 ```dart
 KChartWidget(
@@ -1604,7 +1667,7 @@ KChartWidget(
 )
 ```
 
-### 14.7 External zoom buttons
+### 13.7 External zoom buttons
 
 ```dart
 final ctrl = KChartController();
@@ -1614,7 +1677,7 @@ IconButton(onPressed: ctrl.zoomOut, icon: Icon(Icons.zoom_out))
 IconButton(onPressed: ctrl.reset, icon: Icon(Icons.refresh))
 ```
 
-### 14.8 Lưu/khôi phục zoom state khi đổi timeframe
+### 13.8 Lưu/khôi phục zoom state khi đổi timeframe
 
 ```dart
 KChartScaleState? _savedScale;
@@ -1628,7 +1691,7 @@ KChartWidget(
 // Khi đổi timeframe: truyền _savedScale vào instance mới → widget tự restore.
 ```
 
-### 14.10 Real-time WebSocket price ticker
+### 13.10 Real-time WebSocket price ticker
 
 ```dart
 // State:
@@ -1664,7 +1727,7 @@ KChartWidget(
 > `livePrice` thay đổi → `shouldRepaint` trả `true` → chỉ `drawNowPrice()` là thực sự cần vẽ lại.  
 > `datas` reference thay đổi → full repaint (tính lại min/max, grid, toàn bộ nến).
 
-### 14.9 Overscroll handoff sang outer scrollview
+### 13.9 Overscroll handoff sang outer scrollview
 
 ```dart
 void _onChartVerticalOverscroll(double delta) {
@@ -1696,7 +1759,7 @@ SingleChildScrollView(
 
 ---
 
-## 15. Troubleshooting & pitfalls
+## 14. Troubleshooting & pitfalls
 
 ### "Indicator không hiện"
 
@@ -1713,7 +1776,7 @@ SingleChildScrollView(
 
 ### "Crosshair label dính vào cạnh"
 
-- Tăng `xFrontPadding` (mặc định 100px tại chart ≥375px).
+- Tăng `xFrontPadding` (mặc định `40`px tại chart ≥375px — giảm từ `100` theo yêu cầu trực tiếp, xem §12.11).
 
 ### "Chart hẹp vẫn chừa khoảng trống lớn bên phải"
 
@@ -1762,11 +1825,13 @@ SingleChildScrollView(
 
 ---
 
-## 16. Phân tích cơ chế Y Grid & Anchor Zoom (MEXC / TradingView)
+## 15. Phân tích cơ chế Y Grid & Anchor Zoom (MEXC / TradingView)
 
-> Tổng hợp từ phân tích kỹ thuật `anchor_zoom.md` và `scroll_vertical_y.md`. Đây là tham khảo thiết kế — k_chart_jk hiện dùng mô hình `mScaleY + mOffsetY` (canvas transform), không phải `visibleMinPrice / visibleMaxPrice`.
+> Tổng hợp từ phân tích kỹ thuật `anchor_zoom.md` và `scroll_vertical_y.md`. Đây là tham khảo thiết kế — k_chart_jk hiện dùng mô hình `mScaleY + mOffsetY` (canvas transform), không phải `visibleMinPrice / visibleMaxPrice` làm state chính.
+>
+> **Cập nhật:** phần **16.2 Dynamic Y Grid** bên dưới giờ **đã implement**, chỉ khác cách tiếp cận — không lưu `visibleMinPrice`/`visibleMaxPrice` làm state, mà mỗi frame `MainRenderer` NGHỊCH ĐẢO transform `mScaleY`/`offsetY` hiện có để suy ra range đang hiển thị (`_priceAtScreenY`), rồi sinh nice-number step từ range đó (`lib/utils/price_ticks.dart`, xem [9.4](#94-time-tick-planner--price-ticks-trục-xy)) — cùng kết quả cuối (grid tự thích ứng, không nhảy), khác cơ chế lưu trữ. 16.1 (Vertical Scroll bằng `visibleMinPrice`/`visibleMaxPrice`) và 16.3 (Anchor Zoom tường minh) vẫn CHỈ là tham khảo, chưa áp dụng — `mScaleY`/`offsetY` hiện tại không anchor chính xác tại điểm chạm khi zoom Y (chỉ có `zoomAt` cho trục X làm việc này — xem `CHART_AXES.md` §4).
 
-### 16.1 Vertical Scroll — di chuyển khoảng giá
+### 15.1 Vertical Scroll — di chuyển khoảng giá
 
 TradingView **không** dùng `translateY`. Thay vào đó nó quản lý hai biến:
 
@@ -1814,7 +1879,7 @@ price = visibleMinPrice + (chartHeight - y) / scaleY;
 
 ---
 
-### 16.2 Dynamic Y Grid
+### 15.2 Dynamic Y Grid
 
 MEXC / TradingView **không** dùng grid cố định. Mục tiêu: giữ khoảng cách giữa 2 đường grid vào khoảng **50–100 px**.
 
@@ -1854,7 +1919,7 @@ while (p <= visibleMax) {
 
 ---
 
-### 16.3 Anchor Zoom
+### 15.3 Anchor Zoom
 
 Mục tiêu: giá tại vị trí ngón tay / con trỏ **không thay đổi** sau khi zoom.
 
@@ -1891,5 +1956,6 @@ zoomAtPoint(anchorY, newScale / oldScale);
 
 ---
 
+_Cập nhật: 2026-08-10 — viết lại toàn bộ trục X/Y theo `CHART_AXES.md` (weight-ladder time-tick planner, nice-number price ticks, price axis strip riêng §7), fix label trục thời gian dính mép, fix tick giá không thích ứng gesture zoom Y, fix retry-widen data gap ở example app. Cập nhật section 1 (Unreleased), 2, 6.7, 10.4 (viết lại hoàn toàn), 12, 13.3/13.6, 16._
 _Cập nhật: 2026-07-02 — fix 3 bug shouldRepaint/getDate-cache phát hiện qua code review (isLine, isTrendLine/selectY/lines, date-string cache identity), cập nhật section 12 & 10.3._
 _Cập nhật: 2026-06-30 — thêm shouldRepaint logic, livePrice real-time pattern, recipe 14.10, pitfalls, section 16 (Y Grid & Anchor Zoom)_

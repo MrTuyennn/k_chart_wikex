@@ -5,15 +5,15 @@ A Flutter candlestick chart package with support for multiple technical indicato
 ## Features
 
 - Candlestick and line chart rendering
-- **Free pan:** drag 1 ngón tay di chuyển chart theo cả X (scroll nến) lẫn Y (dịch vùng giá)
+- **Free pan:** drag 1 ngón tay scroll nến (X) luôn; dịch vùng giá (Y) thêm khi đã zoom Y trước đó (`scaleY != 1.0`)
 - **Zoom X:** pinch 2 ngón tay, giới hạn bởi `minScale` / `maxScale`
-- **Zoom Y:** drag dọc trong vùng phải chart (width tỷ lệ `xFrontPadding`, co khi chart hẹp)
-- **Double tap** vùng phải: reset zoom Y và pan Y về mặc định
+- **Zoom Y:** drag dọc trong strip trục giá bên phải, ngang hàng main chart (width tự đo theo label giá, co khi chart hẹp; strip ngang hàng volume/secondary KHÔNG kích hoạt — chỉ scale main chart)
+- **Double tap** cùng vùng: reset zoom Y và pan Y về mặc định
 - **Tap-to-toggle crosshair:** tap hiện crosshair, tap lại ẩn; kéo khi crosshair đang hiện sẽ di chuyển crosshair thay vì scroll
 - **Price labels đồng bộ scaleY + offsetY:** labels trục Y luôn hiển thị đúng giá theo vị trí visual của nến
 - Fling (quán tính) khi scroll, không fling khi đang kéo crosshair
-- **Main indicators:** MA, EMA, BOLL, SAR, ZigZag, SuperTrend, AVL
-- **Secondary indicators:** MACD, KDJ, RSI, WR, CCI, OBV, TRIX, MTM, StochRSI
+- **Main indicators (8):** MA, EMA, BOLL, SAR, ZigZag, SuperTrend, AVL, Ichimoku
+- **Secondary indicators (13):** MACD, KDJ, RSI, WR, CCI, OBV, TRIX, MTM, StochRSI, BRAR, BIAS, PSY, ATR
 - Volume bar chart with MA5 / MA10 overlay
 - Long-press info dialog with custom `detailBuilder`
 - Programmatic control via `KChartController` (zoom in/out, reset)
@@ -95,7 +95,7 @@ KChartWidget(
   showNowPrice: true,
   showInfoDialog: true,
   mBaseHeight: 300,
-  timeFormat: TimeFormat.yearMonthDayWithHour,
+  // timeFormat: omitted → axis format adapts to zoom, crosshair follows candle interval (recommended default, see "Time format" below)
   onLoadMore: (isLeft) {
     // load more data when user scrolls to the edge
   },
@@ -120,6 +120,7 @@ KChartWidget(
 | `ZigZagIndicator()`     | ZigZag                             | 12, 2, 5       |
 | `SuperTrendIndicator()` | SuperTrend                         | 10, 30         |
 | `AVLIndicator()`        | Average Value Line (Binance-style) | — (no period)  |
+| `IchimokuIndicator()`   | Ichimoku Kinko Hyo (5 lines + cloud) | 9, 26, 52    |
 
 ### Secondary indicators (panel below chart)
 
@@ -134,6 +135,10 @@ KChartWidget(
 | `TRIXIndicator()`     | Triple Exponential Average | 12, 20         |
 | `MTMIndicator()`      | Momentum                   | 12, 6          |
 | `StochRSIIndicator()` | Stochastic RSI             | 14, 14, 3, 3   |
+| `BRARIndicator()`     | Popularity/Willingness Index | 26           |
+| `BIASIndicator()`     | Bias Ratio                 | 6, 12, 24      |
+| `PSYIndicator()`      | Psychological Line         | 12, 6          |
+| `ATRIndicator()`      | Average True Range         | 14, 6          |
 
 Volume hiển thị trong panel riêng giữa main chart và date axis. Toggle bằng `volHidden`.
 
@@ -176,7 +181,7 @@ DataUtil.calculateAll(data, mainIndicators, secondaryIndicators);
 | `showInfoDialog`        | `bool`                     | `true`                    | Show info on long-press/tap         |
 | `isTapShowInfoDialog`   | `bool`                     | `false`                   | Single tap shows crosshair + dialog |
 | `materialInfoDialog`    | `bool`                     | `true`                    | Material vs Cupertino dialog style  |
-| `timeFormat`            | `List<String>`             | `TimeFormat.yearMonthDay` | Time label format on X axis         |
+| `timeFormat`            | `List<String>?`            | `null`                    | Force 1 fixed format for every tick. `null` (default) = axis picks minute/hour/day pattern from the current zoom level, crosshair picks it once from the candle interval — see [Time format](#time-format) |
 | `fixedLength`           | `int`                      | `2`                       | Decimal places for price labels     |
 | `verticalTextAlignment` | `VerticalTextAlignment`    | `right`                   | Price label side (`left`/`right`)   |
 | `hideGrid`              | `bool`                     | `false`                   | Hide grid lines                     |
@@ -187,18 +192,23 @@ DataUtil.calculateAll(data, mainIndicators, secondaryIndicators);
 | ------------------ | --------- | -------------------- | ------------------------------------------------------------------------------------- |
 | `mBaseHeight`      | `double`  | `360`                | Main chart height (px)                                                                |
 | `mSecondaryHeight` | `double?` | 20% of `mBaseHeight` | Secondary panel height (px)                                                           |
-| `xFrontPadding`    | `double`  | `100`                | Right padding after last candle (px at ≥375px chart; scales down on narrower screens) |
+| `xFrontPadding`    | `double`  | `40`                 | Right padding after last candle (px at ≥375px chart; scales down on narrower screens) |
+| `xOverscrollPadding` | `double` | `200`               | Extra right-side space the user can drag past the resting position (px at ≥375px chart; `0` disables it) — see [Overscroll](#overscroll-drag-past-the-resting-position) below |
 
 ### Zoom / scroll
 
 | Parameter    | Type                | Default             | Description                     |
 | ------------ | ------------------- | ------------------- | ------------------------------- |
-| `minScale`   | `double`            | `0.5`               | Minimum zoom scale X            |
+| `minScale`   | `double`            | `0.2`                | Minimum zoom scale X            |
 | `maxScale`   | `double`            | `2.2`               | Maximum zoom scale X            |
 | `flingTime`  | `int`               | `600`               | Fling animation duration (ms)   |
 | `flingRatio` | `double`            | `0.5`               | Fling velocity multiplier       |
 | `flingCurve` | `Curve`             | `Curves.decelerate` | Fling animation curve           |
 | `chartScale` | `KChartScaleState?` | `null`              | Saved scale to restore on mount |
+
+#### Overscroll (drag past the resting position)
+
+Dragging left past where the chart normally rests (right after `xFrontPadding`) reveals up to `xOverscrollPadding` extra px of empty space — the same "pull past the edge to see more room next to the current price" behavior Binance/MEXC charts have. Releasing the drag **keeps the position you dragged to** — there's no elastic snap-back; drag right again to close the gap. Set `xOverscrollPadding: 0` to disable and restore the old hard-stop-at-rest behavior.
 
 ### Data loading & callbacks
 
@@ -216,6 +226,8 @@ DataUtil.calculateAll(data, mainIndicators, secondaryIndicators);
 | Parameter               | Type      | Default | Description                                  |
 | ----------------------- | --------- | ------- | -------------------------------------------- |
 | `livePrice`             | `double?` | `null`  | Real-time price for now-price line           |
+| `bidPrice`/`askPrice`   | `double?` | `null`  | Best bid/best ask — draws 2 floating badges near the now-price line when **both** are set (order book) |
+| `bidLabel`/`askLabel`   | `String`  | `'Bid'`/`'Ask'` | Text shown before the price in the bid/ask badges |
 | `backgroundLogo`        | `Widget?` | `null`  | Watermark widget centered in main chart area |
 | `backgroundLogoOpacity` | `double`  | `1.0`   | Watermark opacity (0.0–1.0)                  |
 
@@ -276,6 +288,29 @@ if (_lastRender == null || now - _lastRender! > 16) {
 
 ---
 
+## Bid/Ask badges (order book)
+
+Pass `bidPrice`/`askPrice` (best bid, best ask) to draw a small box stacking Ask (red, top) above Bid (green, bottom), positioned right next to the now-price badge on its left side — **in addition to** it, not replacing it. The now-price badge (flag + number, and the dashed line) keeps drawing exactly as it always did, at exactly the same position, independent of `bidPrice`/`askPrice`. Both share the same Y each frame, so the box moves together with the now-price line as it updates. Same colors as the now-price badge (`KChartColors.livePriceStyle.upColor`/`dnColor`):
+
+```dart
+KChartWidget(
+  _datas, chartStyle, chartColors,
+  livePrice: _livePrice,
+  bidPrice: orderBook?.bids.firstOrNull?.price,   // highest buy price
+  askPrice: orderBook?.asks.firstOrNull?.price,   // lowest sell price
+  // bidLabel: 'Bid', askLabel: 'Ask',             // override for i18n
+  ...
+)
+```
+
+- Both must be non-null to draw the Ask/Bid box — there's no fallback like `livePrice`'s `?? datas.last.close`. When either is `null`, only the Ask/Bid box is skipped; the now-price badge is unaffected either way.
+- Positioned per `verticalTextAlignment` (default `right` — docked at the price axis edge, same side the now-price badge occupies) directly to the left of the now-price badge, sharing its vertical center, with a small gap so the two never overlap. The box is **always** perfectly centered on the badge, in every case — including when the price sits right at the top/bottom edge of the visible range, where it may extend slightly past the main chart area (into the top padding or the volume panel below) rather than ever losing that alignment.
+- Its width grows toward the plot's candle area as the price/label text gets longer (it's on the side facing the candles, unlike the badge itself). If it ends up covering the last candle on a narrow chart or with long labels, either shorten `bidLabel`/`askLabel` or increase `xFrontPadding`.
+
+**Performance note:** every non-`null` change to `bidPrice`/`askPrice` triggers `ChartPainter.shouldRepaint` → a full repaint. Order books typically update at high frequency over WebSocket, so if the box isn't currently shown to the user, pass `null` for both instead of computing real values and hiding the box in your own UI — a `null` → `null` change is a no-op for `shouldRepaint`, so ticks arriving while the box is toggled off cost nothing. The bundled `example` app follows this pattern with a `showBidAsk` toggle (`ChartBloc`/`ChartState`) gating what's passed to `bidPrice`/`askPrice`, not just what's drawn.
+
+---
+
 ## Save & restore zoom state
 
 Use `KChartScaleState` to preserve zoom / scroll position when switching timeframes:
@@ -326,12 +361,10 @@ KChartWidget(
 
 | Gesture                     | Hành động                                                 |
 | --------------------------- | --------------------------------------------------------- |
-| 1 ngón kéo ngang            | Scroll qua các nến (X)                                    |
-| 1 ngón kéo dọc              | Pan vùng giá lên/xuống (Y)                                |
-| 1 ngón kéo tự do            | Scroll X + pan Y đồng thời                                |
+| 1 ngón kéo tự do trong main chart | Scroll X (luôn); pan Y **chỉ khi đã zoom Y trước đó** (`scaleY != 1.0`) — cả 2 trục cập nhật CÙNG lúc trên 1 cú kéo chéo, không tách riêng thành 2 gesture |
 | Pinch 2 ngón                | Zoom scaleX (thu phóng số nến hiển thị)                   |
-| Kéo dọc vùng phải chart     | Zoom scaleY (thu phóng vùng giá; width ∝ `xFrontPadding`) |
-| Double tap vùng phải        | Reset scaleY và offsetY về mặc định                       |
+| Kéo dọc strip trục giá bên phải, ngang hàng main chart | Zoom scaleY (thu phóng vùng giá) — strip ngang hàng volume/secondary KHÔNG kích hoạt |
+| Double tap cùng vùng        | Reset scaleY và offsetY về mặc định                       |
 | Tap vào nến                 | Hiện crosshair + info dialog                              |
 | Tap lại                     | Ẩn crosshair                                              |
 | Kéo khi crosshair đang hiện | Di chuyển crosshair theo ngón tay                         |
@@ -457,6 +490,12 @@ const KChartColors(
 
 Badge vẽ qua `LivePriceBadgePainter` (convert từ `assets/Number.svg`) — nền bo góc + mũi tên nhỏ trỏ vào chart, tự co giãn theo độ dài số giá.
 
+Với `verticalTextAlignment: right` (mặc định), badge đặt CHỦ YẾU nằm trên strip trục giá bên phải (`priceAxisRect`) — chỉ mũi tên lấn nhẹ vào vùng nến (~5px) để "chạm" đúng đường kẻ giá hiện tại, còn lại toàn bộ thân badge nằm trên strip trục giá, giống cách nhiều sàn (Binance/MEXC) hiển thị giá hiện tại đè lên trục Y. `verticalTextAlignment: left` không đổi (không có strip trục giá bên trái).
+
+Padding quanh chữ trong badge (6px ngang, 4px dọc) — nền đỏ/xanh bo góc, dễ đọc, khớp phong cách MEXC. Strip trục giá bên phải (bề rộng tự đo theo label giá dài nhất, xem `chart_jk_arch.md` §5.9/§7.6) cũng được nới rộng hơn một chút để chứa vừa badge thoải mái, không bị cắt.
+
+Số hiển thị trong badge giữ nguyên số thập phân đầy đủ theo `fixedLength`, giống mọi nhãn giá khác — không làm tròn.
+
 ### Volume bar opacity
 
 `KChartStyle.volBarOpacity` (0.0–1.0) **nhân dồn** với alpha sẵn có trong `volumeStyle.upColor`/`dnColor` — không ghi đè. Set alpha thẳng trong `Color` (vd `Color(0x8076FF03)`) hoặc qua `volBarOpacity` đều dùng được, kết hợp được cả hai:
@@ -524,7 +563,30 @@ detailBuilder: (KLineEntity entity) {
 
 ## Time format
 
-Use predefined formats or build your own:
+`timeFormat` (equivalently `KChartStyle.dateTimeFormat`) uses the same 3 patterns in both places time gets rendered — **X-axis ticks** and the **crosshair label** — but with `timeFormat: null` (default) each picks WHICH of the 3 patterns differently:
+
+- `HH:mm`
+- `MM-dd HH:mm`
+- `yy-MM-dd`
+
+**Crosshair — picked once from the candle interval**, fixed for the chart's lifetime: gap between your first two candles < 1 hour (1m/5m/15m/30m) → `HH:mm`; < 1 day (1H/4H) → `MM-dd HH:mm`; ≥ 1 day (1D) → `yy-MM-dd`. Reasonable since the crosshair only ever shows 1 value at a time — no risk of two labels colliding.
+
+**X-axis ticks — re-evaluated every frame from the current zoom level**, so it changes as you pinch in/out on the same dataset instead of staying fixed to the candle interval:
+
+- Zoomed in enough that ticks are still sub-hourly apart → `HH:mm` (compact, no date needed).
+- Ticks are sub-daily apart, or the candle interval itself is ≥ 1 hour (1H/4H, so any 2 ticks could land on the same time-of-day on different days) → `MM-dd HH:mm`.
+- Zoomed out far enough that only day/month/year-boundary candles survive, or the candle interval itself is ≥ 1 day (1D, which is always local midnight) → `yy-MM-dd` — the hour/minute is dropped because at that point it's either meaningless (1D candles have no real time-of-day) or actively misleading (every surviving tick would print `"00:00"` with nothing to tell the days apart).
+
+In short: zoom out and the axis collapses to dates; zoom in and it opens back up to `HH:mm` — automatically, per timeframe, without you tracking which timeframe is selected.
+
+**Within the `MM-dd HH:mm` tier, a midnight tick drops its time only when no other visible tick shares its day.** Day-boundary candles (local midnight) often win the collision-packing over their non-midnight neighbors, so several nearby ticks can legitimately land on `00:00`. Whether that reads as clutter depends on what's next to it:
+
+- `08-13 00:00` next to `08-13 12:00` (same day) → both keep their full time — the midnight tick needs it to stay distinct from its same-day neighbor.
+- `08-13 00:00`, `08-14 00:00`, `08-15 00:00` (consecutive days, nothing else on any of those days) → all three drop the redundant time, reading as `08-13`, `08-14`, `08-15`.
+
+Concretely: a midnight tick is trimmed when the *next* tick chronologically falls on a different calendar day (or there is no next tick). This can never cause two ticks to collide — midnight only happens once per calendar day, so two trimmed ticks are always two different dates.
+
+**Force 1 fixed format for both, regardless of zoom** — use a predefined format or build your own (`List<String>`, tokens from `lib/utils/date_format_util.dart`: `yyyy`, `yy`, `mm`, `dd`, `hour24Padded`, `nn`...) to override both defaults above:
 
 ```dart
 // 2024-01-15
@@ -536,6 +598,36 @@ timeFormat: TimeFormat.yearMonthDayWithHour
 // custom
 timeFormat: const [yyyy, '/', mm, '/', dd]
 ```
+
+### Migrating off a hand-rolled per-timeframe format
+
+If your app previously mapped its own timeframe (1m/5m/15m/.../1D) to a `List<String>` and passed it in as `timeFormat` on every rebuild, that logic is now redundant — and worse than the built-in default, since a format picked once from the timeframe can't react to zoom the way the axis default does (see above).
+
+```dart
+// Before
+List<String> get axisTimeFormat {
+  if (interval < const Duration(hours: 1)) return const [hour24Padded, ':', nn];
+  if (interval < const Duration(days: 1)) {
+    return const [mm, '-', dd, ' ', hour24Padded, ':', nn];
+  }
+  return const [yy, '-', mm, '-', dd];
+}
+// ...
+KChartWidget(
+  // ...
+  timeFormat: state.timeframe.axisTimeFormat,
+)
+
+// After — just delete the getter and the parameter
+KChartWidget(
+  // ...
+  // timeFormat: omitted, axis + crosshair pick their own defaults
+)
+```
+
+Keep `timeFormat` around only if you actually want the SAME fixed pattern on the axis at every zoom level (a different locale, always-show-year, matching some other UI element, etc.) — otherwise the zoom-aware default reads better once you've compared the two.
+
+Either way, tick *selection* (which candles get a label, spacing, pan/zoom stability) always follows the same weight-ladder algorithm — `timeFormat`/`dateTimeFormat` only changes the TEXT on each tick.
 
 ---
 
@@ -565,7 +657,7 @@ KChartWidget(
 
 ## Example
 
-See the full working demo in the [`example/`](example/lib/main.dart) folder — bloc-based, kết nối REST + WebSocket thật (kline lịch sử, live tick, order book), toggle theme/indicator, tất cả 7 main + 9 secondary indicator có sẵn để bật thử.
+See the full working demo in the [`example/`](example/lib/main.dart) folder — bloc-based, kết nối REST + WebSocket thật (kline lịch sử, live tick, order book), toggle theme/indicator, tất cả 8 main + 13 secondary indicator có sẵn để bật thử (mặc định tắt hết, tự bật qua chip).
 
 Demo cần file env chứa endpoint thật (git-ignored — không commit trong repo). Tạo từ template rồi điền giá trị:
 

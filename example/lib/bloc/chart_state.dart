@@ -53,7 +53,10 @@ SecondaryIndicator buildSecondaryIndicator(SecondaryIndicatorType type) =>
     };
 
 enum ChartTimeframe {
+  m1('1m', Duration(minutes: 1), '1', '1min'),
+  m5('5m', Duration(minutes: 5), '5', '5min'),
   m15('15m', Duration(minutes: 15), '15', '15min'),
+  m30('30m', Duration(minutes: 30), '30', '30min'),
   h1('1H', Duration(hours: 1), '60', '1hour'),
   h4('4H', Duration(hours: 4), '240', '4hour'),
   d1('1D', Duration(days: 1), '1D', '1day');
@@ -73,6 +76,10 @@ enum ChartTimeframe {
 
   /// Field `period` trong payload WS kline — dùng lọc frame theo khung.
   final String wsPeriod;
+
+  // Format nhãn trục thời gian giờ do lib tự suy từ khoảng cách data (xem
+  // `BaseChartPainter.initFormats`) — không cần tính tay ở đây rồi truyền
+  // qua `KChartWidget.timeFormat` nữa (đã bỏ getter `axisTimeFormat`).
 }
 
 /// Toàn bộ data/business state của demo chart. View chỉ đọc field/getter ở
@@ -85,6 +92,7 @@ class ChartState extends Equatable {
     required this.secondaryTypes,
     required this.savedChartScale,
     required this.isLine,
+    required this.candleBodyStyle,
     required this.volHidden,
     required this.isDark,
     required this.showDepth,
@@ -92,6 +100,7 @@ class ChartState extends Equatable {
     required this.isFetching,
     required this.hasMoreHistory,
     required this.isLive,
+    required this.showBidAsk,
     this.livePrice,
     this.orderBook,
     this.error,
@@ -103,6 +112,10 @@ class ChartState extends Equatable {
   final Set<SecondaryIndicatorType> secondaryTypes;
   final KChartScaleState savedChartScale;
   final bool isLine;
+
+  /// Solid/Hollow Up/Hollow Down/Hollow — xem [CandleBodyStyle]. Chỉ áp dụng
+  /// khi [isLine] = false (candlestick mode).
+  final CandleBodyStyle candleBodyStyle;
   final bool volHidden;
   final bool isDark;
   final bool showDepth;
@@ -121,6 +134,17 @@ class ChartState extends Equatable {
   /// null khi chưa nhận được message nào.
   final OrderBookSnapshot? orderBook;
 
+  /// Bật/tắt box Ask/Bid trên chart (`KChartWidget.bidPrice`/`askPrice`) —
+  /// mặc định `false` (opt-in). `orderBook` cập nhật với tần suất cao qua
+  /// WS (nhiều tick/giây), mỗi lần đổi `bidPrice`/`askPrice` đều trigger
+  /// `ChartPainter.shouldRepaint` → full repaint (`calculateValue()` lại từ
+  /// đầu) — nếu box không hiển thị thì không đáng phải trả phí đó. Xem
+  /// `_buildKChart`: khi `false`, TRUYỀN THẲNG `null` cho `bidPrice`/
+  /// `askPrice` (không phải "tính rồi ẩn UI") — tick order book vẫn tới
+  /// nhưng `KChartWidget` luôn nhận `null`, `shouldRepaint` so `null == null`
+  /// không trigger gì, tránh đúng cái giá phải trả.
+  final bool showBidAsk;
+
   /// Lỗi tải dữ liệu (REST) — null khi bình thường.
   final String? error;
 
@@ -137,6 +161,7 @@ class ChartState extends Equatable {
     Set<SecondaryIndicatorType>? secondaryTypes,
     KChartScaleState? savedChartScale,
     bool? isLine,
+    CandleBodyStyle? candleBodyStyle,
     bool? volHidden,
     bool? isDark,
     bool? showDepth,
@@ -144,6 +169,7 @@ class ChartState extends Equatable {
     bool? isFetching,
     bool? hasMoreHistory,
     bool? isLive,
+    bool? showBidAsk,
     double? livePrice,
     OrderBookSnapshot? orderBook,
     Object? error = _unset,
@@ -155,6 +181,7 @@ class ChartState extends Equatable {
       secondaryTypes: secondaryTypes ?? this.secondaryTypes,
       savedChartScale: savedChartScale ?? this.savedChartScale,
       isLine: isLine ?? this.isLine,
+      candleBodyStyle: candleBodyStyle ?? this.candleBodyStyle,
       volHidden: volHidden ?? this.volHidden,
       isDark: isDark ?? this.isDark,
       showDepth: showDepth ?? this.showDepth,
@@ -163,6 +190,7 @@ class ChartState extends Equatable {
       isFetching: isFetching ?? this.isFetching,
       hasMoreHistory: hasMoreHistory ?? this.hasMoreHistory,
       isLive: isLive ?? this.isLive,
+      showBidAsk: showBidAsk ?? this.showBidAsk,
       livePrice: livePrice ?? this.livePrice,
       orderBook: orderBook ?? this.orderBook,
       error: identical(error, _unset) ? this.error : error as String?,
@@ -209,15 +237,15 @@ class ChartState extends Equatable {
 
   KChartColors get colors => isDark
       ? const KChartColors(
-          bgColor: Color(0xFF1C1C1E),
-          defaultTextColor: Color(0xFF8E8E93),
-          gridColor: Color.fromARGB(255, 187, 187, 187),
-          selectFillColor: Color(0xFF2C2C2E),
-          selectBorderColor: Color(0xFF636366),
-          crossColor: Color(0xFFEBEBF5),
-          crossTextColor: Color(0xFFEBEBF5),
-          maxColor: Color(0xFFEBEBF5),
-          minColor: Color(0xFFEBEBF5),
+          bgColor: Color(0xFF0B0E11),
+          defaultTextColor: Color(0xFF848E9C),
+          gridColor: Color(0xFF1E2329),
+          selectFillColor: Color(0xFF1E2329),
+          selectBorderColor: Color(0xFF474D57),
+          crossColor: Color(0xFFEAECEF),
+          crossTextColor: Color(0xFFEAECEF),
+          maxColor: Color(0xFFEAECEF),
+          minColor: Color(0xFFEAECEF),
         )
       : const KChartColors(gridColor: Color.fromARGB(255, 237, 237, 237));
 
@@ -229,6 +257,7 @@ class ChartState extends Equatable {
     secondaryTypes,
     savedChartScale,
     isLine,
+    candleBodyStyle,
     volHidden,
     isDark,
     showDepth,
@@ -236,6 +265,7 @@ class ChartState extends Equatable {
     isFetching,
     hasMoreHistory,
     isLive,
+    showBidAsk,
     livePrice,
     // OrderBookSnapshot không override == — mỗi lần merge tạo instance mới
     // nên identity-inequality đủ để trigger rebuild.

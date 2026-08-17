@@ -19,10 +19,10 @@ void main() {
     await Future.delayed(const Duration(milliseconds: 200));
     expect(bloc.state.error, isNotNull);
 
-    // State mặc định bật SẴN toàn bộ indicator (demo xem hết) — nên toggle ở
-    // đây nghĩa là TẮT, không phải bật. Vẫn giữ nguyên mục đích regression:
-    // bắn nhiều toggle event khác type dồn dập, kiểm tra completer queue
-    // khớp đúng thứ tự, không mất thay đổi của nhau.
+    // State mặc định TẮT hết mọi indicator (_kIndicatorsEnabledByDefault =
+    // false trong ChartBloc) — nên toggle ở đây nghĩa là BẬT. Vẫn giữ nguyên
+    // mục đích regression: bắn nhiều toggle event khác type dồn dập, kiểm
+    // tra completer queue khớp đúng thứ tự, không mất thay đổi của nhau.
     bloc.add(const ChartMainIndicatorToggled(MainIndicatorType.boll));
     bloc.add(const ChartMainIndicatorToggled(MainIndicatorType.ema));
     bloc.add(
@@ -31,15 +31,15 @@ void main() {
 
     await bloc.stream.firstWhere(
       (s) =>
-          !s.mainTypes.contains(MainIndicatorType.ema) &&
-          !s.secondaryTypes.contains(SecondaryIndicatorType.stochRsi),
+          s.mainTypes.contains(MainIndicatorType.ema) &&
+          s.secondaryTypes.contains(SecondaryIndicatorType.stochRsi),
     );
 
-    expect(bloc.state.mainTypes, isNot(contains(MainIndicatorType.boll)));
-    expect(bloc.state.mainTypes, isNot(contains(MainIndicatorType.ema)));
+    expect(bloc.state.mainTypes, contains(MainIndicatorType.boll));
+    expect(bloc.state.mainTypes, contains(MainIndicatorType.ema));
     expect(
       bloc.state.secondaryTypes,
-      isNot(contains(SecondaryIndicatorType.stochRsi)),
+      contains(SecondaryIndicatorType.stochRsi),
     );
 
     // close() phải hoàn tất trong thời gian hợp lý — không treo do worker

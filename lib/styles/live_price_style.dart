@@ -18,8 +18,8 @@ class LivePriceStyle {
   final TextStyle textStyle;
 
   const LivePriceStyle({
-    this.upColor = const Color(0xFF14AD8F),
-    this.dnColor = const Color(0xFFD5405D),
+    this.upColor = const Color(0xFF0ECB81),
+    this.dnColor = const Color(0xFFF6465D),
     this.textStyle = const TextStyle(fontSize: 10, color: Colors.white),
   });
 }

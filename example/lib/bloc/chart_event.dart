@@ -55,9 +55,27 @@ class ChartLineModeChanged extends ChartEvent {
   List<Object?> get props => [isLine];
 }
 
+/// Đổi kiểu vẽ thân nến (Solid/Hollow Up/Hollow Down/Hollow) — xem
+/// [CandleBodyStyle]. Không ảnh hưởng `isLine = true` (line chart không có
+/// khái niệm thân nến).
+class ChartCandleBodyStyleChanged extends ChartEvent {
+  const ChartCandleBodyStyleChanged(this.bodyStyle);
+  final CandleBodyStyle bodyStyle;
+
+  @override
+  List<Object?> get props => [bodyStyle];
+}
+
 /// Bật/tắt panel volume.
 class ChartVolumeVisibilityToggled extends ChartEvent {
   const ChartVolumeVisibilityToggled();
+}
+
+/// Bật/tắt box Ask/Bid trên chart — xem doc [ChartState.showBidAsk] vì sao
+/// mặc định tắt (order book cập nhật tần suất cao, chỉ nên trả phí repaint
+/// khi user thực sự muốn xem).
+class ChartBidAskVisibilityToggled extends ChartEvent {
+  const ChartBidAskVisibilityToggled();
 }
 
 /// Bật/tắt dark mode.

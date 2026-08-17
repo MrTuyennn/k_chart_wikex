@@ -28,10 +28,10 @@ class DepthChartColors {
   /// constructor chart color
   const DepthChartColors({
     ///depth color
-    this.upColor = const Color(0xFF14AD8F),
-    this.upFillPathColor = const Color(0x2314AD8F),
-    this.dnColor = const Color(0xFFD5405D),
-    this.dnFillPathColor = const Color(0x23D5405D),
+    this.upColor = const Color(0xFF0ECB81),
+    this.upFillPathColor = const Color(0x230ECB81),
+    this.dnColor = const Color(0xFFF6465D),
+    this.dnFillPathColor = const Color(0x23F6465D),
 
     ///value border color after selection
     this.selectBorderColor = const Color(0xFF909196),

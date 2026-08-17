@@ -32,6 +32,7 @@ class ChartPainter extends BaseChartPainter {
   bool isrecordingCord = false; //For TrendLine
   final double selectY; //For TrendLine
   static double get maxScrollX => BaseChartPainter.maxScrollX;
+  static double get minScrollX => BaseChartPainter.minScrollX;
   late BaseChartRenderer mMainRenderer;
   VolRenderer? mVolRenderer;
   Set<BaseChartRenderer> mSecondaryRendererList = {};
@@ -45,11 +46,18 @@ class ChartPainter extends BaseChartPainter {
   late Paint paintCross, selectPointPaint, selectorBorderPaint;
   late Paint nowPriceLinePaint;
   late Paint _bgPaint;
+  /// Viền khung phân cách plot | price-axis-strip | time-axis (§7.5) — tách
+  /// riêng khỏi `gridPaint` của từng renderer (chỉ dùng nội bộ panel đó).
+  late Paint gridSeparatorPaint;
   late Paint _trendLinePaint, _trendLineStrokePaint, _trendLineSegmentPaint;
   final bool hideGrid;
   final bool showNowPrice;
   final VerticalTextAlignment verticalTextAlignment;
   final double? livePrice;
+  final double? bidPrice;
+  final double? askPrice;
+  final String bidLabel;
+  final String askLabel;
   // khi true, bỏ qua drawBg để canvas trong suốt — dùng khi có backgroundLogo widget ở layer dưới
   final bool skipBg;
 
@@ -60,6 +68,10 @@ class ChartPainter extends BaseChartPainter {
     required this.isTrendLine, //For TrendLine
     required this.selectY, //For TrendLine
     this.livePrice,
+    this.bidPrice,
+    this.askPrice,
+    this.bidLabel = 'Bid',
+    this.askLabel = 'Ask',
     required this.sink,
     required super.datas,
     required super.scaleX,
@@ -68,7 +80,10 @@ class ChartPainter extends BaseChartPainter {
     required super.isLongPress,
     required super.selectX,
     required super.xFrontPadding,
+    super.xOverscrollPadding = 0.0,
     required super.baseDimension,
+    required super.priceAxisWidthCache,
+    required super.timeTickPlanner,
     super.isOnTap,
     super.isTapShowInfoDialog,
     required this.verticalTextAlignment,
@@ -95,6 +110,10 @@ class ChartPainter extends BaseChartPainter {
       ..style = PaintingStyle.stroke
       ..color = chartColors.selectBorderColor;
 
+    gridSeparatorPaint = Paint()
+      ..color = chartColors.gridColor
+      ..strokeWidth = 0.5
+      ..isAntiAlias = true;
     nowPriceLinePaint = Paint()
       ..strokeWidth = chartStyle.nowPriceLineWidth
       ..isAntiAlias = true;
@@ -120,12 +139,21 @@ class ChartPainter extends BaseChartPainter {
   TextStyle getTextStyle(Color color) =>
       resolveTextStyle(chartColors.candleStyle.textStyle, color);
 
+  /// Headroom trên/dưới dải giá hiển thị (CHART_AXES.md §6.2) — không có phần
+  /// đệm này, nến cao/thấp nhất chạm sát mép panel. Chỉ áp cho DẢI hiển thị
+  /// (đưa vào `MainRenderer`); `mMainMaxValue`/`mMainMinValue` gốc (annotation
+  /// max/min, kẹp now-price) giữ nguyên giá trị thật, không bị pad.
+  static const double _kPricePadFraction = 0.08;
+
   @override
   void initChartRenderer() {
+    final double priceRange = mMainMaxValue - mMainMinValue;
+    final double pricePad = priceRange > 0 ? priceRange * _kPricePadFraction : 0;
     mMainRenderer = MainRenderer(
       mMainRect,
-      mMainMaxValue,
-      mMainMinValue,
+      mPriceAxisRect,
+      mMainMaxValue + pricePad,
+      mMainMinValue - pricePad,
       mTopPadding,
       mainIndicators,
       isLine,
@@ -142,6 +170,7 @@ class ChartPainter extends BaseChartPainter {
     if (mVolRect != null) {
       mVolRenderer = VolRenderer(
         mVolRect!,
+        mPriceAxisRect,
         mVolMaxValue,
         mVolMinValue,
         mChildPadding,
@@ -157,6 +186,7 @@ class ChartPainter extends BaseChartPainter {
       mSecondaryRendererList.add(
         SecondaryRenderer(
           mSecondaryRectList[i].mRect,
+          mPriceAxisRect,
           mSecondaryRectList[i].mMaxValue,
           mSecondaryRectList[i].mMinValue,
           mChildPadding,
@@ -167,40 +197,80 @@ class ChartPainter extends BaseChartPainter {
         ),
       );
     }
+
+    // §7.6 — đo label rộng nhất SAU khi biết tick giá thật, áp cho frame kế
+    // tiếp (xem doc [priceAxisWidth]/[PriceAxisWidthCache]). Chỉ đo panel giá
+    // chính (số dài/nhiều thập phân nhất, quyết định độ rộng strip).
+    updatePriceAxisWidth(
+      (mMainRenderer as MainRenderer).measureMaxLabelWidth(
+        getTextStyle(chartColors.defaultTextColor),
+      ),
+    );
   }
 
   @override
   void drawBg(Canvas canvas, Size size) {
     if (skipBg) return;
+    // mWidth, không phải mMainRect.width/... — các rect panel giờ chỉ rộng
+    // bằng mPlotWidth (§7), nhưng nền phải phủ hết TOÀN BỘ canvas kể cả strip
+    // giá bên phải, nếu không strip sẽ trông như 1 khoảng trống trong suốt.
     canvas.drawRect(
-      Rect.fromLTRB(0, 0, mMainRect.width, mMainRect.height + mTopPadding),
+      Rect.fromLTRB(0, 0, mWidth, mMainRect.height + mTopPadding),
       _bgPaint,
     );
     if (mVolRect != null) {
       canvas.drawRect(
-        Rect.fromLTRB(0, mMainRect.bottom, mVolRect!.width, mVolRect!.bottom),
+        Rect.fromLTRB(0, mMainRect.bottom, mWidth, mVolRect!.bottom),
         _bgPaint,
       );
     }
     for (int i = 0; i < mSecondaryRectList.length; ++i) {
       final r = mSecondaryRectList[i].mRect;
       canvas.drawRect(
-        Rect.fromLTRB(0, r.top - mChildPadding, r.width, r.bottom),
+        Rect.fromLTRB(0, r.top - mChildPadding, mWidth, r.bottom),
         _bgPaint,
       );
     }
+    // mDateRect + mCornerRect riêng (không gộp thành 1 rect full-width) để
+    // giữ nguyên mDateRect đúng nghĩa "chỉ rộng bằng plot" (R1) cho các chỗ
+    // khác đang dùng nó — ở đây chỉ cần tô nền, ghép 2 rect là đủ, không cần
+    // đổi field.
     canvas.drawRect(mDateRect, _bgPaint);
+    canvas.drawRect(mCornerRect, _bgPaint);
   }
 
   @override
   void drawGrid(canvas) {
     if (!hideGrid) {
-      mMainRenderer.drawGrid(canvas, mGridRows, mGridColumns);
-      mVolRenderer?.drawGrid(canvas, mGridRows, mGridColumns);
+      // Cùng 1 danh sách x cho cả 3 panel — lưới dọc luôn thẳng hàng dù số
+      // lượng/vị trí tick thay đổi theo zoom (CHART_AXES.md I6).
+      final verticalXs = mTimeTicks.map((t) => t.x).toList();
+      mMainRenderer.drawGrid(canvas, mGridRows, verticalXs);
+      mVolRenderer?.drawGrid(canvas, mGridRows, verticalXs);
       for (final element in mSecondaryRendererList) {
-        element.drawGrid(canvas, mGridRows, mGridColumns);
+        element.drawGrid(canvas, mGridRows, verticalXs);
       }
     }
+    _drawAxisSeparators(canvas);
+  }
+
+  /// 2 đường phân cách khung (§7, §7.5 z-order bước 4) — KHÔNG phụ thuộc
+  /// `hideGrid` (đây là viền khung, không phải lưới giá/thời gian):
+  ///  - dọc tại `mPlotWidth`, cao hết plot+strip giá+trục thời gian
+  ///    (main→đáy `mDateRect`) — ranh giới plot | price axis (R2).
+  ///  - ngang tại đỉnh `mDateRect`, rộng hết `mWidth` — ranh giới
+  ///    {plot,price axis} | {time axis, corner} (R1).
+  void _drawAxisSeparators(Canvas canvas) {
+    canvas.drawLine(
+      Offset(mPlotWidth, mMainRect.top),
+      Offset(mPlotWidth, mDateRect.bottom),
+      gridSeparatorPaint,
+    );
+    canvas.drawLine(
+      Offset(0, mDateRect.top),
+      Offset(mWidth, mDateRect.top),
+      gridSeparatorPaint,
+    );
   }
 
   @override
@@ -216,6 +286,16 @@ class ChartPainter extends BaseChartPainter {
     }
 
     canvas.save();
+    // Clip theo chiều NGANG vào đúng mPlotWidth, ÁP TRƯỚC translate/scale
+    // theo X bên dưới nên nằm ở screen space (không co giãn theo scaleX) —
+    // nếu không, nến/volume/secondary ở gần mép phải sẽ vẽ TRÀN vào price-
+    // axis strip (đè lên label giá) trước khi index của chúng bị index-loop
+    // (mRealStopIndex/mVisibleStopIndex) loại hẳn khỏi vòng vẽ — thấy rõ nhất
+    // khi zoom vào (candleWidth lớn, thân nến cuối cùng thừa hẳn ra ngoài dù
+    // tâm nến vẫn còn nằm trong mPlotWidth). Nến/volume/secondary vốn không
+    // hề bị clip ngang ở đâu khác — clip duy nhất trước đây (`BaseChartPainter.
+    // paint`) phủ TOÀN canvas, gồm cả strip giá, nên không chặn được.
+    canvas.clipRect(Rect.fromLTRB(0, 0, mPlotWidth, mDateRect.top));
     canvas.translate(mTranslateX * scaleX, 0.0);
     canvas.scale(scaleX, 1.0);
 
@@ -305,24 +385,24 @@ class ChartPainter extends BaseChartPainter {
   void drawDate(Canvas canvas, Size size) {
     if (datas == null) return;
 
-    double columnSpace = size.width / mGridColumns;
-    double startX = getX(mStartIndex) - mPointWidth / 2;
-    double stopX = getX(mStopIndex) + mPointWidth / 2;
-    double x = 0.0;
-    double y = 0.0;
-
-    for (var i = 0; i <= mGridColumns; ++i) {
-      double translateX = xToTranslateX(columnSpace * i);
-      if (translateX < startX || translateX > stopX) continue;
-
-      int index = indexOfTranslateX(translateX);
-      TextPainter tp = getTextPainter(getDate(timeAt(index)), null);
-      y = mDateRect.top + (mBottomPadding - tp.height) / 2;
-      x = columnSpace * i - tp.width / 2;
-      if (x < 0) x = 0;
-      if (x > size.width - tp.width) x = size.width - tp.width;
+    // Tick đã được BaseChartPainter chọn 1 lần/frame (weight ladder,
+    // CHART_AXES.md §5) — ở đây chỉ vẽ, không tự chọn tick (I3).
+    //
+    // KHÔNG kẹp/ẩn label theo có "fit" hay không — 2 cách đó đều gây cảm giác
+    // ẩn/hiện đột ngột ở 2 mép (kẹp thì label dính cứng 1 chỗ; ẩn khi không
+    // fit thì label biến mất/xuất hiện đột ngột dù gridline vẫn còn). Thay
+    // vào đó CLIP canvas theo đúng mPlotWidth rồi vẽ label ở ĐÚNG vị trí thật
+    // (tick.x, không dịch) — y hệt cách nến/volume bị canvas cắt tự nhiên khi
+    // trượt ra khỏi viewport, cho cảm giác trượt liên tục thay vì bật/tắt.
+    canvas.save();
+    canvas.clipRect(Rect.fromLTRB(0, mDateRect.top, mPlotWidth, mDateRect.bottom));
+    for (final tick in mTimeTicks) {
+      TextPainter tp = getTextPainter(tick.label, null);
+      double y = mDateRect.top + (mBottomPadding - tp.height) / 2;
+      double x = tick.x - tp.width / 2;
       tp.paint(canvas, Offset(x, y));
     }
+    canvas.restore();
   }
 
   /// draw the cross line. when user focus
@@ -345,7 +425,7 @@ class ChartPainter extends BaseChartPainter {
     double x;
     double space = 4.0;
     bool isLeft = false;
-    if (translateXtoX(getX(index)) < mWidth / 2) {
+    if (translateXtoX(getX(index)) < mPlotWidth / 2) {
       isLeft = false;
       x = space;
       RRect rect = RRect.fromLTRBR(
@@ -360,11 +440,11 @@ class ChartPainter extends BaseChartPainter {
       tp.paint(canvas, Offset(x + w1, y - textHeight / 2));
     } else {
       isLeft = true;
-      x = mWidth - textWidth - 2 * w1 - space;
+      x = mPlotWidth - textWidth - 2 * w1 - space;
       RRect rect = RRect.fromLTRBR(
         x,
         y - r,
-        mWidth - space,
+        mPlotWidth - space,
         y + r,
         Radius.circular(2.0),
       );
@@ -384,8 +464,8 @@ class ChartPainter extends BaseChartPainter {
 
     if (x < textWidth + 2 * w1) {
       x = 1 + textWidth / 2 + w1;
-    } else if (mWidth - x < textWidth + 2 * w1) {
-      x = mWidth - 1 - textWidth / 2 - w1;
+    } else if (mPlotWidth - x < textWidth + 2 * w1) {
+      x = mPlotWidth - 1 - textWidth / 2 - w1;
     }
 
     RRect rectBox = RRect.fromLTRBR(
@@ -433,7 +513,7 @@ class ChartPainter extends BaseChartPainter {
     //plot maxima and minima
     double x = translateXtoX(getX(mMainMinIndex));
     double y = _applyScaleY(getMainY(mMainLowMinValue));
-    if (x < mWidth / 2) {
+    if (x < mPlotWidth / 2) {
       //draw right
       TextPainter tp = getTextPainter(
         "── ${NumberUtil.formatFixed(mMainLowMinValue, fixedLength) ?? ''}",
@@ -449,7 +529,7 @@ class ChartPainter extends BaseChartPainter {
     }
     x = translateXtoX(getX(mMainMaxIndex));
     y = _applyScaleY(getMainY(mMainHighMaxValue));
-    if (x < mWidth / 2) {
+    if (x < mPlotWidth / 2) {
       //draw right
       TextPainter tp = getTextPainter(
         "── ${NumberUtil.formatFixed(mMainHighMaxValue, fixedLength) ?? ''}",
@@ -490,12 +570,19 @@ class ChartPainter extends BaseChartPainter {
 
     nowPriceLinePaint.color = priceColor;
 
-    // vẽ đường kẻ ngang
+    // vẽ đường kẻ ngang — LUÔN vẽ (không phụ thuộc bidPrice/askPrice), vẫn
+    // là mốc "đây là mức giá hiện tại" xuyên suốt chart bất kể badge giá vẽ
+    // ở đâu.
     canvas.drawDashLine(
       Offset(0, y),
       Offset(-mTranslateX + mWidth / scaleX, y),
       nowPriceLinePaint,
     );
+
+    // Badge "flag" giá (mũi tên + số) — LUÔN vẽ, kể cả khi có bidPrice/
+    // askPrice: [drawBidAsk] giờ vẽ box Ask/Bid RIÊNG (tách khỏi live price,
+    // đặt phía trên badge này — xem đó), không còn gộp chung 1 khối nên
+    // không còn trùng lặp giá trị live price ở 2 nơi.
 
     // label vẽ giá — nếu textStyle không tự set color thì fallback về trắng
     // (mặc định của LivePriceStyle), tránh chữ dùng màu mặc định của
@@ -508,15 +595,21 @@ class ChartPainter extends BaseChartPainter {
       textDirection: TextDirection.ltr,
     )..layout();
 
-    double paddingX = 5, paddingY = 3;
-    double space = 5.0;
+    double paddingX = _liveBadgePaddingX, paddingY = _liveBadgePaddingY;
+    double space = _liveBadgeSpace;
     double offsetX;
     switch (verticalTextAlignment) {
       case VerticalTextAlignment.left:
         offsetX = space;
         break;
       case VerticalTextAlignment.right:
-        offsetX = mWidth - tp.width - paddingX * 2 - space;
+        // Đẩy hẳn ra ngoài, nằm TRÊN price-axis strip (yêu cầu trực tiếp) —
+        // khác trước (nằm gọn trong mPlotWidth). Chỉ trừ `space` (không trừ
+        // thêm `tp.width + paddingX*2` như cũ) — mép TRÁI badge (nơi mũi tên
+        // của LivePriceBadgePainter trỏ vào, xem doc field đó) chỉ lấn nhẹ
+        // `space` px vào plot để "chạm" đúng đường now-price, còn lại toàn bộ
+        // thân badge nằm trên strip giá bên phải `mPlotWidth`.
+        offsetX = mPlotWidth - space;
         break;
     }
 
@@ -534,6 +627,131 @@ class ChartPainter extends BaseChartPainter {
     canvas.restore();
 
     tp.paint(canvas, Offset(offsetX + paddingX, top));
+  }
+
+  // paddingX/paddingY/space của badge live price (drawNowPrice) — tách
+  // thành static const DÙNG CHUNG với [drawBidAsk] (khác trước: hằng số
+  // riêng biệt dễ lệch nhau nếu chỉ sửa 1 bên — /code-review finding).
+  // space (padding NGOÀI, khoảng lấn vào plot khi đóng `right`/khoảng cách
+  // mép khi đóng `left`) revert lại 8→5 theo yêu cầu trực tiếp ("nằm ra
+  // ngoài cùng và cách 5px thui") — badge lấn vào plot ÍT hơn, nằm ra ngoài
+  // (trên price-axis strip) NHIỀU hơn.
+  static const double _liveBadgePaddingX = 6.0;
+  static const double _liveBadgePaddingY = 4.0;
+  static const double _liveBadgeSpace = 5.0;
+
+  // Padding X/Y trong mỗi ô, khe hở giữa Ask/Bid, khe hở giữa box và badge
+  // live price — tách thành static const cho dễ chỉnh, không dùng ở đâu
+  // khác ngoài [drawBidAsk].
+  static const double _bidAskPaddingX = 6.0, _bidAskPaddingY = 3.0;
+  static const double _bidAskCellGap = 2.0;
+  static const double _bidAskGapNextToFlag = 4.0;
+
+  /// Box Ask/Bid — 2 ô xếp chồng (Ask trên/đỏ, Bid dưới/xanh), TÁCH RIÊNG
+  /// khỏi live price (live price vẫn là badge "flag" độc lập trong
+  /// [drawNowPrice], không gộp chung 1 khối). Đặt ngay CẠNH badge live price
+  /// đó — VỀ PHÍA TÂM PLOT (không cố định "luôn bên trái": đóng `right` thì
+  /// box qua bên TRÁI badge — mặc định, khớp yêu cầu "bid/ask nằm bên trái
+  /// live price"; đóng `left` thì box qua bên PHẢI badge, vì badge lúc đó đã
+  /// sát mép trái, đặt thêm box về bên trái nữa sẽ vẽ ra NGOÀI canvas, vô
+  /// hình — bug đã phát hiện qua code review và sửa ở đây), LUÔN LUÔN CÙNG
+  /// tâm dọc trong MỌI trường hợp (không đè lên nhau) — dùng lại CHÍNH XÁC
+  /// công thức toạ độ/kích thước badge live price trong [drawNowPrice]
+  /// ([_liveBadgePaddingX]/[_liveBadgeSpace], hằng số DÙNG CHUNG giữa 2 hàm)
+  /// để biết mép của badge mà không cần đọc state nào lưu lại (badge được vẽ
+  /// độc lập mỗi frame). Vì `centerY`/`flagLeft`/`flagRight` tính lại mỗi
+  /// frame theo đúng giá live price hiện tại (giống hệt [drawNowPrice]), box
+  /// tự "di chuyển theo" live price — không cần cơ chế theo dõi riêng. KHÔNG
+  /// kẹp lại vị trí box theo `[minY, maxY]` như badge now-price — ưu tiên
+  /// căn giữa tuyệt đối, chấp nhận box tràn ra ngoài `mMainRect` (padding
+  /// trên/panel volume dưới) khi giá sát đỉnh/đáy dải hiển thị, thay vì lệch
+  /// tâm. Chỉ vẽ khi CẢ HAI [bidPrice]/[askPrice] cùng non-null.
+  @override
+  void drawBidAsk(Canvas canvas) {
+    if (bidPrice == null || askPrice == null) return;
+    if (datas == null) return;
+
+    final double value = livePrice ?? datas!.last.close;
+    final double minY = _applyScaleY(getMainY(mMainHighMaxValue));
+    final double maxY = _applyScaleY(getMainY(mMainLowMinValue));
+    final double centerY = _applyScaleY(getMainY(value)).clamp(minY, maxY);
+
+    final textStyle = resolveTextStyle(chartColors.livePriceStyle.textStyle, Colors.white);
+    TextPainter buildTp(String text) =>
+        TextPainter(
+          text: TextSpan(text: text, style: textStyle),
+          textDirection: TextDirection.ltr,
+        )..layout();
+
+    final askTp = buildTp('$askLabel ${NumberUtil.formatFixed(askPrice!, fixedLength) ?? ''}');
+    final bidTp = buildTp('$bidLabel ${NumberUtil.formatFixed(bidPrice!, fixedLength) ?? ''}');
+
+    final double rowHeight = askTp.height + _bidAskPaddingY * 2;
+    final double boxWidth =
+        [askTp.width, bidTp.width].reduce((a, b) => a > b ? a : b) + _bidAskPaddingX * 2;
+    final double boxHeight = rowHeight * 2 + _bidAskCellGap;
+
+    // Mép trái/phải của badge live price (drawNowPrice) — CÙNG công thức
+    // (`priceTp.width`, dùng chung [_liveBadgePaddingX]/[_liveBadgeSpace] với
+    // drawNowPrice, xem doc ở đó) để box Ask/Bid đặt sát ngay cạnh, không đè
+    // lên badge đó.
+    final priceTp = buildTp(NumberUtil.formatFixed(value, fixedLength) ?? '');
+    final double flagBadgeWidth = priceTp.width + _liveBadgePaddingX * 2;
+    // `right`: khớp đúng offsetX mới của drawNowPrice (đẩy ra ngoài, nằm
+    // trên price-axis strip — chỉ trừ `space`, không trừ thêm `flagBadgeWidth`
+    // như trước). 2 công thức PHẢI khớp nhau, sửa 1 bên thì sửa luôn bên kia.
+    final double flagLeft = verticalTextAlignment == VerticalTextAlignment.right
+        ? mPlotWidth - _liveBadgeSpace
+        : _liveBadgeSpace;
+    final double flagRight = flagLeft + flagBadgeWidth;
+
+    // Box và badge LUÔN cùng tâm dọc (centerY) trong MỌI trường hợp — không
+    // kẹp lại vào [minY, maxY] theo chiều cao box nữa (yêu cầu trực tiếp:
+    // "luôn luôn căn giữa so với live price trong mọi case"). Badge chỉ 1
+    // hàng, box 2 hàng nên box vươn ra đều 2 phía trên/dưới quanh Y của
+    // badge — khi giá sát đỉnh/đáy dải hiển thị, box có thể tràn ra ngoài
+    // mMainRect 1 chút (vào phần padding trên/panel volume dưới) thay vì bị
+    // đẩy lệch tâm — đây là đánh đổi CỐ Ý, ưu tiên "luôn căn giữa" hơn "luôn
+    // nằm trong mMainRect" (khác nguyên tắc cũ của badge now-price, chỉ áp
+    // dụng riêng cho box này theo đúng yêu cầu).
+    final double top = centerY - boxHeight / 2;
+    final double askTop = top;
+    final double bidTop = top + rowHeight + _bidAskCellGap;
+
+    // /code-review finding: đặt CỐ ĐỊNH bên trái badge (bất kể alignment) làm
+    // box vẽ hoàn toàn ngoài canvas (x âm, vô hình) khi đóng `left` (badge đã
+    // sát mép trái, không còn chỗ để lùi thêm về bên trái). Đổi sang "luôn về
+    // phía TÂM plot" — đóng `right` (badge sát phải) thì box qua TRÁI badge;
+    // đóng `left` (badge sát trái) thì box qua PHẢI badge — cả 2 case đều
+    // nằm trong canvas.
+    final double left = verticalTextAlignment == VerticalTextAlignment.right
+        ? flagLeft - _bidAskGapNextToFlag - boxWidth
+        : flagRight + _bidAskGapNextToFlag;
+
+    void drawCell(Rect rect, Color color, TextPainter tp) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(3)),
+        Paint()..color = color,
+      );
+      tp.paint(
+        canvas,
+        Offset(
+          rect.left + (rect.width - tp.width) / 2,
+          rect.top + (rect.height - tp.height) / 2,
+        ),
+      );
+    }
+
+    drawCell(
+      Rect.fromLTWH(left, askTop, boxWidth, rowHeight),
+      chartColors.livePriceStyle.dnColor,
+      askTp,
+    );
+    drawCell(
+      Rect.fromLTWH(left, bidTop, boxWidth, rowHeight),
+      chartColors.livePriceStyle.upColor,
+      bidTp,
+    );
   }
 
   void drawTrendLines(Canvas canvas, Size size) {
@@ -659,8 +877,28 @@ class ChartPainter extends BaseChartPainter {
   bool shouldRepaint(BaseChartPainter oldDelegate) {
     if (oldDelegate is ChartPainter) {
       if (oldDelegate.livePrice != livePrice ||
+          oldDelegate.bidPrice != bidPrice ||
+          oldDelegate.askPrice != askPrice ||
+          // Hiếm khi đổi lúc runtime (vd chuyển locale) hơn bidPrice/askPrice,
+          // nhưng vẫn là field CÓ THỂ đổi qua UI — thiếu dòng này thì badge
+          // giữ nguyên text locale cũ tới khi có lý do khác trigger repaint,
+          // đúng lớp lỗi mà comment về `bodyStyle` ngay dưới đã cảnh báo.
+          oldDelegate.bidLabel != bidLabel ||
+          oldDelegate.askLabel != askLabel ||
           oldDelegate.isTrendLine != isTrendLine ||
           oldDelegate.selectY != selectY ||
+          // `chartColors` KHÔNG so nguyên object — instance mới được dựng
+          // lại mỗi build (vd `_demoColors(state)` trong example) dù nội
+          // dung không đổi, so reference sẽ ép repaint MỌI build (jank).
+          // `bodyStyle` là field DUY NHẤT trong chartColors hiện đổi qua
+          // tương tác UI trực tiếp (Kiểu K-line picker) — thiếu dòng này,
+          // đổi Solid/Hollow không tự vẽ lại ngay, chỉ "ăn theo" lần
+          // repaint tiếp theo do lý do khác (vd tick livePrice) mới hiện.
+          // Field `chartColors` nào khác sau này cũng đổi được qua UI thì
+          // phải thêm so sánh riêng ở đây theo đúng cách này (không so
+          // nguyên `chartColors`).
+          oldDelegate.chartColors.candleStyle.bodyStyle !=
+              chartColors.candleStyle.bodyStyle ||
           !_trendLinesEqual(oldDelegate.lines, lines)) {
         return true;
       }

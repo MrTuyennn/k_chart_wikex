@@ -12,6 +12,7 @@ class SecondaryRenderer extends BaseChartRenderer<MACDEntity> {
 
   SecondaryRenderer(
     Rect mainRect,
+    Rect priceAxisRect,
     double maxValue,
     double minValue,
     double topPadding,
@@ -21,6 +22,7 @@ class SecondaryRenderer extends BaseChartRenderer<MACDEntity> {
     this.chartColors,
   ) : super(
         chartRect: mainRect,
+        priceAxisRect: priceAxisRect,
         maxValue: maxValue,
         minValue: minValue,
         topPadding: topPadding,
@@ -92,8 +94,19 @@ class SecondaryRenderer extends BaseChartRenderer<MACDEntity> {
     tp.paint(canvas, Offset(x, chartRect.top - topPadding));
   }
 
+  /// Vẽ vào [priceAxisRect] (strip riêng bên phải, §7) — KHÔNG đè lên panel
+  /// indicator như trước khi có strip.
+  ///
+  /// `indicator.drawVerticalText` (13 lớp con — MACD/KDJ/RSI/...) tự vẽ theo
+  /// `chartRect.width` coi như đang ở local x=0 (đúng khi mọi rect trong
+  /// codebase này đều bắt đầu tại x=0 — thật vậy tới trước khi có strip giá).
+  /// `priceAxisRect` giờ có `left != 0`, nên thay vì sửa cả 13 file indicator,
+  /// dịch canvas sang gốc strip rồi đưa 1 rect "local" (left=0) — mọi công
+  /// thức `chartRect.width - x` trong indicator vẫn đúng nguyên vẹn.
   @override
   void drawVerticalText(canvas, textStyle, int gridRows) {
+    canvas.save();
+    canvas.translate(priceAxisRect.left, 0);
     indicator.drawVerticalText(
       canvas: canvas,
       style: textStyle,
@@ -101,27 +114,27 @@ class SecondaryRenderer extends BaseChartRenderer<MACDEntity> {
       minValue: minValue,
       fixedLength: fixedLength,
       chartRect: Rect.fromLTRB(
-        chartRect.left,
+        0,
         chartRect.top - topPadding,
-        chartRect.right - chartStyle.space,
+        priceAxisRect.width - chartStyle.space,
         chartRect.bottom,
       ),
     );
+    canvas.restore();
   }
 
   @override
-  void drawGrid(Canvas canvas, int gridRows, int gridColumns) {
+  void drawGrid(Canvas canvas, int gridRows, List<double> verticalXs) {
     // canvas.drawLine(Offset(0, chartRect.top), Offset(chartRect.width, chartRect.top), gridPaint); //hidden line
     canvas.drawLine(
       Offset(0, chartRect.bottom),
       Offset(chartRect.width, chartRect.bottom),
       gridPaint,
     );
-    double columnSpace = chartRect.width / gridColumns;
-    for (int i = 0; i <= gridColumns; i++) {
+    for (final x in verticalXs) {
       canvas.drawLine(
-        Offset(columnSpace * i, chartRect.top - topPadding),
-        Offset(columnSpace * i, chartRect.bottom),
+        Offset(x, chartRect.top - topPadding),
+        Offset(x, chartRect.bottom),
         gridPaint,
       );
     }

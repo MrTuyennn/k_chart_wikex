@@ -13,6 +13,7 @@ import '../market/order_book.dart';
 import '../market/realtime_frame.dart';
 import 'chart_event.dart';
 import 'chart_state.dart';
+import 'kline_merge.dart';
 
 // ── Event nội bộ — chỉ ChartBloc tự dispatch từ listener WS/timer bên trong.
 // Private theo file (Dart library-level) nên View không thấy và không gọi được.
@@ -89,7 +90,9 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     on<ChartMainIndicatorToggled>(_onMainIndicatorToggled);
     on<ChartSecondaryIndicatorToggled>(_onSecondaryIndicatorToggled);
     on<ChartLineModeChanged>(_onLineModeChanged);
+    on<ChartCandleBodyStyleChanged>(_onCandleBodyStyleChanged);
     on<ChartVolumeVisibilityToggled>(_onVolumeVisibilityToggled);
+    on<ChartBidAskVisibilityToggled>(_onBidAskVisibilityToggled);
     on<ChartThemeToggled>(_onThemeToggled);
     on<ChartDepthVisibilityChanged>(_onDepthVisibilityChanged);
     on<ChartDepthBottomLabelCountChanged>(_onDepthBottomLabelCountChanged);
@@ -132,6 +135,11 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
   StreamSubscription<RealtimeFrame>? _thumbSub;
   StreamSubscription<RealtimeFrame>? _tradePlateSub;
 
+  // Số lần tối đa mở rộng cửa sổ fetch lịch sử khi gặp gap (xem _loadHistory)
+  // — ×4 mỗi lần nên 4 lần đã phủ 4^4 = 256x cửa sổ gốc, đủ vượt qua downtime
+  // vài ngày mà không loop mãi nếu symbol thật sự chỉ có ít data.
+  static const int _kMaxHistoryWidenAttempts = 4;
+
   // Coalesce WS: buffer bar đến trong cửa sổ ngắn rồi flush 1 lần —
   // không rebuild chart theo từng message.
   static const Duration _coalesceWindow = Duration(milliseconds: 250);
@@ -144,40 +152,63 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
   Timer? _orderBookThrottle;
   static const Duration _orderBookCoalesce = Duration(milliseconds: 200);
 
+  // livePrice: bắn từ CẢ `topicKline`/`topicKlineLive` (mỗi bar) LẪN
+  // `topicThumb` (mỗi tick ticker) — 2 nguồn cộng dồn, trên cặp giao dịch
+  // sôi động có thể tới hàng chục lần/giây. Trước đây `add(_ChartLivePriceChanged)`
+  // gọi THẲNG, không coalesce như kline/order book ở trên — mỗi tick ép
+  // `BlocBuilder` gốc (bọc cả trang, không `buildWhen`) rebuild toàn bộ
+  // Scaffold + `ChartPainter` repaint lại toàn bộ nến/indicator visible,
+  // độc lập với style nến đang chọn. Đây là nguồn jank LỚN HƠN nhiều so với
+  // chi phí vẽ thêm của candle_style (vốn chỉ ăn theo mỗi lần repaint này,
+  // không tự nó gây repaint) — coalesce cùng kiểu với kline/order book để
+  // giới hạn tần suất rebuild UI, không đổi tần suất xử lý dữ liệu.
+  Timer? _livePriceThrottle;
+  double? _pendingLivePrice;
+  static const Duration _livePriceCoalesce = Duration(milliseconds: 150);
+
   static String get _topicPath => MarketEnv.symbol; // đã đúng dạng BASE/QUOTE
+
+  /// true = bật sẵn TOÀN BỘ indicator lúc mở app (demo xem hết cùng lúc);
+  /// false = tắt hết, user tự bật qua chip. Đổi 1 chỗ duy nhất ở đây, không
+  /// cần sửa lại 2 `Set` bên dưới.
+  static const bool _kIndicatorsEnabledByDefault = false;
 
   static ChartState _initialState() {
     return const ChartState(
       data: [],
       timeframe: ChartTimeframe.h1,
-      // Bật hết toàn bộ indicator đã implement — demo xem tất cả cùng lúc.
-      mainTypes: {
-        MainIndicatorType.ma,
-        MainIndicatorType.boll,
-        MainIndicatorType.ema,
-        MainIndicatorType.sar,
-        MainIndicatorType.superTrend,
-        MainIndicatorType.zigzag,
-        MainIndicatorType.avl,
-        MainIndicatorType.ichimoku,
-      },
-      secondaryTypes: {
-        SecondaryIndicatorType.macd,
-        SecondaryIndicatorType.kdj,
-        SecondaryIndicatorType.rsi,
-        SecondaryIndicatorType.wr,
-        SecondaryIndicatorType.cci,
-        SecondaryIndicatorType.obv,
-        SecondaryIndicatorType.trix,
-        SecondaryIndicatorType.mtm,
-        SecondaryIndicatorType.stochRsi,
-        SecondaryIndicatorType.brar,
-        SecondaryIndicatorType.bias,
-        SecondaryIndicatorType.psy,
-        SecondaryIndicatorType.atr,
-      },
+      mainTypes: _kIndicatorsEnabledByDefault
+          ? {
+              MainIndicatorType.ma,
+              MainIndicatorType.boll,
+              MainIndicatorType.ema,
+              MainIndicatorType.sar,
+              MainIndicatorType.superTrend,
+              MainIndicatorType.zigzag,
+              MainIndicatorType.avl,
+              MainIndicatorType.ichimoku,
+            }
+          : {},
+      secondaryTypes: _kIndicatorsEnabledByDefault
+          ? {
+              SecondaryIndicatorType.macd,
+              SecondaryIndicatorType.kdj,
+              SecondaryIndicatorType.rsi,
+              SecondaryIndicatorType.wr,
+              SecondaryIndicatorType.cci,
+              SecondaryIndicatorType.obv,
+              SecondaryIndicatorType.trix,
+              SecondaryIndicatorType.mtm,
+              SecondaryIndicatorType.stochRsi,
+              SecondaryIndicatorType.brar,
+              SecondaryIndicatorType.bias,
+              SecondaryIndicatorType.psy,
+              SecondaryIndicatorType.atr,
+            }
+          : {},
       savedChartScale: KChartScaleState(),
       isLine: false,
+      candleBodyStyle: CandleBodyStyle.solid,
       volHidden: false,
       isDark: false,
       showDepth: false,
@@ -185,6 +216,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
       isFetching: true,
       hasMoreHistory: true,
       isLive: true,
+      showBidAsk: false,
     );
   }
 
@@ -261,19 +293,37 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     emit(state.copyWith(isFetching: true, error: null));
     try {
       final toMs = DateTime.now().toUtc().millisecondsSinceEpoch;
-      final fromMs =
-          toMs -
-          ChartState.initialBatchSize * timeframe.interval.inMilliseconds;
-      final bars = await fetchMarketHistory(
-        apiBaseUrl: MarketEnv.apiBaseUrl,
-        historyPath: MarketEnv.historyPath,
-        symbol: MarketEnv.symbol,
-        resolution: timeframe.restResolution,
-        period: timeframe.wsPeriod,
-        fromMs: fromMs,
-        toMs: toMs,
-      );
-      if (isClosed || state.timeframe != timeframe) return; // đã đổi khung khác
+      final intervalMs = timeframe.interval.inMilliseconds;
+      // Cửa sổ ban đầu (`initialBatchSize × interval`) giả định data liên
+      // tục. Sàn có thể có downtime/gap gần đây (hay gặp ở môi trường dev —
+      // vd 15m từng bị hở ~2 ngày ngay trước "hiện tại") khiến server trả về
+      // ÍT hơn initialBatchSize dù KHÔNG rỗng (còn lịch sử xa hơn gap). Mở
+      // rộng cửa sổ lùi xa hơn (×4 mỗi lần) tới khi đủ nến hoặc server trả
+      // rỗng thật (hết lịch sử) — tối đa _kMaxHistoryWidenAttempts lần để
+      // không loop mãi nếu symbol thật sự chỉ có ít data.
+      var windowMultiplier = 1;
+      List<MarketKline> bars = const [];
+      for (var attempt = 0; attempt < _kMaxHistoryWidenAttempts; attempt++) {
+        final fromMs = toMs - windowMultiplier * ChartState.initialBatchSize * intervalMs;
+        bars = await fetchMarketHistory(
+          apiBaseUrl: MarketEnv.apiBaseUrl,
+          historyPath: MarketEnv.historyPath,
+          symbol: MarketEnv.symbol,
+          resolution: timeframe.restResolution,
+          period: timeframe.wsPeriod,
+          fromMs: fromMs,
+          toMs: toMs,
+        );
+        if (isClosed || state.timeframe != timeframe) return; // đã đổi khung khác
+        if (bars.length >= ChartState.initialBatchSize || bars.isEmpty) break;
+        windowMultiplier *= 4;
+      }
+      // Mở rộng có thể trả về nhiều hơn initialBatchSize (vd nhảy thẳng qua
+      // gap tới vùng dữ liệu dày) — cắt về đúng batch size mong muốn, giữ
+      // phần MỚI NHẤT (gần `toMs`).
+      if (bars.length > ChartState.initialBatchSize) {
+        bars = bars.sublist(bars.length - ChartState.initialBatchSize);
+      }
       await _withRecalcLock(() async {
         if (isClosed || state.timeframe != timeframe) return;
         var next = state.copyWith(
@@ -398,6 +448,9 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     _pending.clear();
     _orderBookThrottle?.cancel();
     _orderBookThrottle = null;
+    _livePriceThrottle?.cancel();
+    _livePriceThrottle = null;
+    _pendingLivePrice = null;
     await _klineSub?.cancel();
     await _klineLiveSub?.cancel();
     await _thumbSub?.cancel();
@@ -415,7 +468,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
       return; // chỉ bỏ đúng frame lỗi — KHÔNG đụng vào _pending
     }
     // Live price từ kline mọi period (giá mới nhất của symbol).
-    add(_ChartLivePriceChanged(kline.close.toDouble()));
+    _queueLivePrice(kline.close.toDouble());
     if (kline.period != state.timeframe.wsPeriod) {
       return; // khác khung timeframe đang chọn
     }
@@ -431,7 +484,23 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     final thumb = tryParseThumbFrame(frame);
     // Stream global — tự lọc đúng cặp đang xem.
     if (thumb == null || thumb.symbol != MarketEnv.symbol) return;
-    add(_ChartLivePriceChanged(thumb.close));
+    _queueLivePrice(thumb.close);
+  }
+
+  /// Coalesce `_ChartLivePriceChanged` — cùng pattern `_pending`/`_throttle`
+  /// (kline) và `_orderBookMerge`/`_orderBookThrottle` (order book) ở trên:
+  /// giữ giá MỚI NHẤT, chỉ `add()` 1 lần/cửa sổ thay vì mỗi frame WS. Gọi từ
+  /// cả `_onKlineFrame` VÀ `_onThumbFrame` (2 nguồn cộng dồn tần suất).
+  void _queueLivePrice(double price) {
+    _pendingLivePrice = price;
+    _livePriceThrottle ??= Timer(_livePriceCoalesce, () {
+      _livePriceThrottle = null;
+      final pending = _pendingLivePrice;
+      _pendingLivePrice = null;
+      if (pending != null && !isClosed) {
+        add(_ChartLivePriceChanged(pending));
+      }
+    });
   }
 
   void _onTradePlateFrame(RealtimeFrame frame) {
@@ -469,10 +538,11 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
       // state.data đọc BÊN TRONG khoá — mới nhất tính đến lúc này, không bị
       // handler khác (toggle indicator, load more...) chen ngang đè mất.
       var data = state.data;
+      final intervalMs = state.timeframe.interval.inMilliseconds;
       for (final k in bars) {
         // Re-check period: timeframe có thể đã đổi khi bar còn nằm buffer.
         if (k.period != state.timeframe.wsPeriod) continue;
-        data = _mergeBar(data, k);
+        data = mergeKlineBar(data, k, intervalMs: intervalMs);
       }
       if (identical(data, state.data)) return;
       var next = state.copyWith(data: data);
@@ -481,26 +551,6 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
       next = next.copyWith(data: computed);
       emit(next);
     });
-  }
-
-  /// Merge 1 bar WS vào series theo barCloseTime tăng dần: trùng time →
-  /// replace (update nến đang chạy), mới hơn → append, còn lại → insert
-  /// đúng vị trí. Luôn trả list MỚI — không sửa in-place để KChartWidget
-  /// thấy reference đổi mà repaint.
-  static List<KLineEntity> _mergeBar(
-    List<KLineEntity> series,
-    MarketKline bar,
-  ) {
-    final entity = bar.toEntity();
-    final t = entity.time!;
-    if (series.isEmpty) return [entity];
-    if (t > series.last.time!) return [...series, entity];
-    for (var i = series.length - 1; i >= 0; i--) {
-      final ti = series[i].time!;
-      if (ti == t) return [...series]..[i] = entity;
-      if (ti < t) return [...series]..insert(i + 1, entity);
-    }
-    return [entity, ...series];
   }
 
   void _onLivePriceChanged(
@@ -565,11 +615,25 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     emit(state.copyWith(isLine: event.isLine));
   }
 
+  void _onCandleBodyStyleChanged(
+    ChartCandleBodyStyleChanged event,
+    Emitter<ChartState> emit,
+  ) {
+    emit(state.copyWith(candleBodyStyle: event.bodyStyle));
+  }
+
   void _onVolumeVisibilityToggled(
     ChartVolumeVisibilityToggled event,
     Emitter<ChartState> emit,
   ) {
     emit(state.copyWith(volHidden: !state.volHidden));
+  }
+
+  void _onBidAskVisibilityToggled(
+    ChartBidAskVisibilityToggled event,
+    Emitter<ChartState> emit,
+  ) {
+    emit(state.copyWith(showBidAsk: !state.showBidAsk));
   }
 
   void _onThemeToggled(ChartThemeToggled event, Emitter<ChartState> emit) {

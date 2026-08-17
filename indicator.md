@@ -1,6 +1,6 @@
 # Indicators — Công dụng & Công thức
 
-Tổng hợp toàn bộ indicator hiện có trong `k_chart_jk`: 7 main (vẽ đè lên biểu đồ giá) + 10 secondary (panel riêng bên dưới). Công thức lấy trực tiếp từ `calc()` trong source, không phải lý thuyết sách vở — khớp đúng những gì code đang chạy.
+Tổng hợp toàn bộ indicator hiện có trong `k_chart_jk`: 8 main (vẽ đè lên biểu đồ giá) + 13 secondary (panel riêng bên dưới). Công thức lấy trực tiếp từ `calc()` trong source, không phải lý thuyết sách vở — khớp đúng những gì code đang chạy.
 
 ---
 
@@ -47,6 +47,22 @@ Tổng hợp toàn bộ indicator hiện có trong `k_chart_jk`: 7 main (vẽ đ
 - **Công dụng**: đường giá khớp lệnh trung bình THỰC của từng nến (không phải MA cộng dồn) — luôn nằm trong thân nến, bám sát giá thật hơn MA/EMA, giống đường "AVL" trên app Binance.
 - **calcParams**: `[]` — không có chu kỳ.
 - **Công thức**: `AVL = AMOUNT / VOL` (quote volume ÷ base volume của chính nến đó); fallback `(high+low+close)/3` khi thiếu `amount` hoặc `vol = 0`.
+
+### Ichimoku — Ichimoku Kinko Hyo, 一目均衡表 (`ichimoku_indicator.dart`)
+- **Công dụng**: hệ thống 5 đường + mây (Kumo) cho xu hướng, hỗ trợ/kháng cự động, và tín hiệu đảo chiều cùng lúc trong 1 indicator — không cần kết hợp nhiều đường riêng lẻ như MA+BOLL.
+- **calcParams**: `[9, 26, 52]` (tenkanPeriod, kijunPeriod, spanBPeriod) — bộ cổ điển (chứng khoán/forex, gốc Nhật). Bộ thường dùng cho crypto (24/7, không phiên nghỉ): `[20, 60, 120]`. `shift` LUÔN = `calcParams[1]` (kijun period), KHÔNG hardcode `26` — đổi param thì shift đổi theo.
+- **Công thức** (`HH(n)`/`LL(n)` = cao/thấp nhất trong n nến gần nhất, tính cả nến hiện tại):
+  ```
+  Tenkan-sen  (Conversion) = (HH(9) + LL(9)) / 2      tại nến hiện tại
+  Kijun-sen   (Base)       = (HH(26) + LL(26)) / 2     tại nến hiện tại
+  Senkou Span A (Leading A)= (Tenkan + Kijun) / 2       dịch TỚI TRƯỚC shift nến
+  Senkou Span B (Leading B)= (HH(52) + LL(52)) / 2      dịch TỚI TRƯỚC shift nến
+  Chikou Span (Lagging)    = close                       dịch LÙI shift nến
+  ```
+  **Kumo (mây)** = vùng tô giữa Span A/B — `Span A > Span B` → mây tăng (xanh), ngược lại → mây giảm (đỏ); polygon tách tại điểm 2 đường giao nhau (nội suy tuyến tính) để đổi màu đúng đoạn.
+- **Warm-up**: Tenkan cần 9 nến, Kijun/Span A cần 26, Span B cần 52 — chart `itemCount < 52` thì mây chưa vẽ đủ; field giữ `null` đúng vị trí warm-up (không sentinel `0`, tránh đường/mây rác kéo về 0).
+- **Hiệu năng**: `calc()` dùng sliding-window monotonic deque O(n) cho cả 3 chu kỳ HH/LL — không phải vòng lặp naive O(n×period), tránh giật khi pan/zoom trên chart nhiều nến.
+- **Render đặc biệt — "vùng tương lai"**: main indicator DUY NHẤT cần vẽ ra ngoài phạm vi `0..itemCount-1` của mảng nến (Span A/B dịch tới trước, Chikou dịch lùi). Cơ chế mở rộng trục X dùng chung cho việc này (`MainIndicator.futureShift`, `mFutureSlots`, 3 phạm vi index tách biệt viewport/hiển-thị-thật/real-mở-rộng) — xem đầy đủ, trung lập nền tảng ở `architecture.md` §3.5. Bản thật (`ichimoku_indicator.dart`) KHÔNG lưu mảng đã dịch sẵn kiểu `spanA[n+shift]` — Span A/B/Chikou vẫn lưu 1 giá trị/nến tại index gốc như mọi indicator khác, phần dịch `±shift` chỉ là cộng/trừ `shift × pointWidth` vào toạ độ X ngay tại draw-time (`IchimokuIndicator.drawChart`). Crosshair/tap-selection bị clamp về nến thật đang hiển thị, KHÔNG cho chọn vào vùng tương lai trống (đơn giản hoá có chủ đích).
 
 ---
 

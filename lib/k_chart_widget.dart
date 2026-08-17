@@ -46,7 +46,17 @@ class KChartWidget extends StatefulWidget {
   final bool showNowPrice;
   final bool showInfoDialog;
   final bool materialInfoDialog; // Material Style Information Popup
-  final List<String> timeFormat;
+
+  /// Ép format nhãn trục thời gian + crosshair, dùng cho MỌI tick bất kể
+  /// weight (bỏ qua thuật toán CHỌN vị trí tick vẫn theo weight-ladder ở
+  /// CHART_AXES.md §5, chỉ đổi phần CHỮ hiển thị). `null` (mặc định) = lib tự
+  /// suy format cố định từ khoảng cách 2 nến đầu — khung phút → `HH:mm`,
+  /// khung giờ → `MM-dd HH:mm`, khung ngày → `yy-MM-dd` (xem
+  /// `BaseChartPainter.initFormats`). Chỉ cần set field này khi muốn override
+  /// default đó (vd format khác theo locale). Tương đương set
+  /// [KChartStyle.dateTimeFormat]; nếu cả hai đều được set,
+  /// [KChartStyle.dateTimeFormat] thắng (xem `_effectiveChartStyle`).
+  final List<String>? timeFormat;
   final double mBaseHeight;
   final double? mSecondaryHeight;
 
@@ -65,12 +75,45 @@ class KChartWidget extends StatefulWidget {
   final VerticalTextAlignment verticalTextAlignment;
   final bool isTrendLine;
   /// Padding phải sau nến cuối (px tại chart ≥375px). Chart hẹp hơn tự co — xem [BaseChartPainter.effectiveRightPaddingPx].
+  /// Mặc định `40` (giảm từ `100` theo yêu cầu trực tiếp — vị trí nghỉ mặc
+  /// định lúc mới mở chart gần sát trục giá hơn). Nếu cần lộ thêm khoảng
+  /// trống, dùng [xOverscrollPadding] (user tự kéo) thay vì tăng số này lên.
   final double xFrontPadding;
+
+  /// Khoảng overscroll TỐI ĐA (px tại chart ≥375px, co giãn theo bề rộng hẹp
+  /// giống [xFrontPadding]) user được phép kéo QUÁ vị trí nghỉ mặc định (đã
+  /// có sẵn [xFrontPadding]) để TỰ lộ thêm khoảng trống bên phải — giống
+  /// hành vi Binance/MEXC (kéo qua trái quá mép, tạo thêm chỗ trống nhìn giá
+  /// hiện tại). Kéo quá rồi thả tay: GIỮ NGUYÊN vị trí đã kéo (không tự bật
+  /// về) — user tự kéo ngược nếu muốn về lại. `0` = tắt hẳn, quay lại hành vi
+  /// chặn cứng `scrollX` ở vị trí nghỉ như trước.
+  final double xOverscrollPadding;
   final WidgetDetailBuilder detailBuilder;
   /// Giới hạn zoom ngang (pinch) và clamp [KChartScaleState.scaleX] khi lưu/khôi phục.
   final double minScale;
   final double maxScale;
   final double? livePrice;
+
+  /// Best bid (giá mua cao nhất)/best ask (giá bán thấp nhất) từ order book —
+  /// khi CẢ HAI cùng non-null, vẽ thêm 1 box RIÊNG (đóng theo
+  /// `verticalTextAlignment` — mặc định `right`, sát trục giá bên phải): 2 ô
+  /// Ask (đỏ, trên)/Bid (xanh, dưới) xếp chồng, đặt ngay BÊN TRÁI badge live
+  /// price (cùng tâm dọc, không đè lên nhau) — box tự "di chuyển theo" live
+  /// price vì cả 2 dùng chung Y tính lại mỗi frame. Badge live price (flag +
+  /// số) LUÔN vẽ độc lập, ĐÚNG vị trí/hành vi như khi chưa có `bidPrice`/
+  /// `askPrice` — 2 field này chỉ THÊM box Ask/Bid bên cạnh, không ảnh hưởng
+  /// gì tới badge. Thiếu 1 trong 2 (`null`) thì không vẽ box Ask/Bid. Dùng
+  /// lại đúng màu `chartColors.livePriceStyle.upColor`/`dnColor` (bid xanh/
+  /// ask đỏ, khớp quy ước buy=up/sell=down đã dùng cho now-price).
+  final double? bidPrice;
+  final double? askPrice;
+
+  /// Nhãn text hiển thị trước giá trong badge — mặc định tiếng Anh, đổi được
+  /// cho app đa ngôn ngữ (khác `chart_translations.dart`'s
+  /// `DepthChartTranslations` — chỉ 2 field đơn giản nên không cần model
+  /// riêng).
+  final String bidLabel;
+  final String askLabel;
 
   final KChartController? controller;
   final bool isLoadingMore;
@@ -99,7 +142,12 @@ class KChartWidget extends StatefulWidget {
     required this.detailBuilder,
     required this.isTrendLine,
     this.livePrice,
-    this.xFrontPadding = 100,
+    this.bidPrice,
+    this.askPrice,
+    this.bidLabel = 'Bid',
+    this.askLabel = 'Ask',
+    this.xFrontPadding = 40,
+    this.xOverscrollPadding = 200,
     this.mainIndicators = const [],
     this.secondaryIndicators = const [],
     // this.onSecondaryTap,
@@ -110,7 +158,7 @@ class KChartWidget extends StatefulWidget {
     this.showNowPrice = true,
     this.showInfoDialog = true,
     this.materialInfoDialog = true,
-    this.timeFormat = TimeFormat.yearMonthDay,
+    this.timeFormat,
     this.onLoadMore,
     this.fixedLength = 2,
     this.flingTime = 600,
@@ -145,6 +193,13 @@ class _KChartWidgetState extends State<KChartWidget>
   double mScaleX = 1.0, mScrollX = 0.0, mSelectX = 0.0;
   // mOffsetY: độ dịch chuyển Y của chart (pan dọc), reset về 0 khi double tap
   double mScaleY = 1.0, mOffsetY = 0.0;
+
+  // Cache bề rộng strip trục giá + planner tick trục thời gian — sở hữu ở
+  // ĐÂY (field bền qua các lần build, giống mScaleX/mScrollX), KHÔNG static
+  // như trước, để nhiều KChartWidget vẽ đồng thời không tranh chấp/rò rỉ vào
+  // nhau (xem doc PriceAxisWidthCache/TimeTickPlanner).
+  final PriceAxisWidthCache _priceAxisWidthCache = PriceAxisWidthCache();
+  final TimeTickPlanner _timeTickPlanner = TimeTickPlanner();
   double _scaleYDragStart = 0.0;
   AnimationController? _controller;
   Animation<double>? aniX;
@@ -179,7 +234,10 @@ class _KChartWidgetState extends State<KChartWidget>
   static const double _minScaleY = 0.3;
   static const double _maxScaleY = 5.0;
   bool isScale = false, isDrag = false, isLongPress = false, isOnTap = false;
-  // true khi gesture bắt đầu trong vùng phải (width = effectiveRightPaddingPx) → drag dọc = scaleY
+  // true khi gesture bắt đầu trong strip trục giá bên phải (width =
+  // _priceAxisWidthCache.value) VÀ nằm trong phạm vi dọc của main chart
+  // (painter.mMainRect) → drag dọc = scaleY. Strip đối diện volume/secondary
+  // panel KHÔNG kích hoạt (mScaleY chỉ scale main chart).
   bool _isScaleYGesture = false;
   // true khi drag bắt đầu trong lúc crosshair đang hiển thị → drag di chuyển crosshair thay vì scroll
   bool _dragStartedInTapMode = false;
@@ -262,7 +320,10 @@ class _KChartWidgetState extends State<KChartWidget>
     mScaleX = saved.scaleX;
     mScaleY = saved.scaleY.clamp(_minScaleY, _maxScaleY);
     mScrollX = saved.scrollX
-        .clamp(0.0, ChartPainter.maxScrollX > 0 ? ChartPainter.maxScrollX : 0.0)
+        .clamp(
+          ChartPainter.minScrollX,
+          ChartPainter.maxScrollX > 0 ? ChartPainter.maxScrollX : 0.0,
+        )
         .toDouble();
     mOffsetY = _clampOffsetY(mOffsetY);
     _lastScale = mScaleX;
@@ -270,8 +331,9 @@ class _KChartWidgetState extends State<KChartWidget>
     if (reclampScrollAfterLayout) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || widget.chartScale != external) return;
-        final clamped =
-            saved.scrollX.clamp(0.0, ChartPainter.maxScrollX).toDouble();
+        final clamped = saved.scrollX
+            .clamp(ChartPainter.minScrollX, ChartPainter.maxScrollX)
+            .toDouble();
         if (mScrollX != clamped) {
           mScrollX = clamped;
           setState(() {});
@@ -353,15 +415,30 @@ class _KChartWidgetState extends State<KChartWidget>
       secondaryIndicators: widget.secondaryIndicators,
       mainIndicators: widget.mainIndicators,
     );
+    // `chartStyle.dateTimeFormat` là field thật sự chạy tới time-tick planner
+    // + crosshair (BaseChartPainter.initFormats/_updateTimeTicks) — [timeFormat]
+    // chỉ là tiện ích ở tầng widget, set hộ field đó khi `chartStyle` chưa tự
+    // set. `chartStyle` set trực tiếp luôn thắng nếu cả hai cùng được truyền.
+    final KChartStyle effectiveChartStyle =
+        widget.chartStyle.dateTimeFormat != null || widget.timeFormat == null
+        ? widget.chartStyle
+        : KChartStyle(widget.timeFormat, widget.chartStyle.volBarOpacity);
     final bool hasLogo = widget.backgroundLogo != null;
     final painter = ChartPainter(
-      widget.chartStyle,
+      effectiveChartStyle,
       widget.chartColors,
       livePrice: widget.livePrice,
+      bidPrice: widget.bidPrice,
+      askPrice: widget.askPrice,
+      bidLabel: widget.bidLabel,
+      askLabel: widget.askLabel,
       baseDimension: baseDimension,
       lines: List<TrendLine>.of(lines), //For TrendLine
       sink: mInfoWindowStream.sink,
       xFrontPadding: widget.xFrontPadding,
+      xOverscrollPadding: widget.xOverscrollPadding,
+      priceAxisWidthCache: _priceAxisWidthCache,
+      timeTickPlanner: _timeTickPlanner,
       isTrendLine: widget.isTrendLine, //For TrendLine
       selectY: mSelectY, //For TrendLine
       datas: widget.datas,
@@ -433,16 +510,30 @@ class _KChartWidgetState extends State<KChartWidget>
         _gestureScaleXAtStart = mScaleX;
         _gestureScaleYAtStart = mScaleY;
         _scaleYDragStart = details.localFocalPoint.dy;
-        // xác định scaleY gesture: 1 ngón tay trong vùng phải (cùng tỷ lệ với xFrontPadding)
+        // xác định scaleY gesture: 1 ngón tay trong strip trục giá thật bên
+        // phải (§7.7 "price axis | drag vertical | scale Y") — dùng đúng
+        // `priceAxisWidth` đang vẽ (§7.6), không phải xFrontPadding (đó là
+        // padding sau nến cuối, không liên quan diện tích strip hiển thị).
+        //
+        // Giới hạn thêm theo TRỤC Y: chỉ tính là scaleY gesture khi chạm nằm
+        // trong đúng phần strip giá ĐỐI DIỆN MAIN CHART (`painter.mMainRect`,
+        // tính cả phần topPadding phía trên nó) — KHÔNG tính khi chạm rơi vào
+        // phần strip đối diện volume/secondary indicator panel. `mScaleY` chỉ
+        // scale main chart (indicator phụ nằm ngoài scope canvas.scale này —
+        // xem `ChartPainter.drawChart`), nên gesture ở strip ngang hàng
+        // indicator phụ không nên kích hoạt scaleY của main. Đồng bộ với vùng
+        // double-tap-reset (`Positioned` bên dưới trong `build()`), vốn đã
+        // giới hạn đúng theo `bottom: mVolumeHeight + totalSecondaryHeight +
+        // bottomPadding` từ trước — trước đây chỉ nhánh double-tap bị giới
+        // hạn, nhánh drag ở đây thì không, gây lệch hành vi giữa 2 nhánh.
         final renderBox = context.findRenderObject() as RenderBox?;
         final width = renderBox?.size.width ?? 0.0;
-        final zoneWidth = BaseChartPainter.effectiveRightPaddingPx(
-          widget.xFrontPadding,
-          width,
-        );
+        final zoneWidth = _priceAxisWidthCache.value;
+        final double dy = details.localFocalPoint.dy;
         _isScaleYGesture =
             details.pointerCount == 1 &&
-            details.localFocalPoint.dx > width - zoneWidth;
+            details.localFocalPoint.dx > width - zoneWidth &&
+            dy <= painter.mMainRect.bottom;
         // Gesture bắt đầu trong vol/secondary/date → chart không xử lý
         // scroll/scale, chỉ forward delta Y cho outer scroll.
         _gestureInMain = painter.isInMainRect(details.localFocalPoint);
@@ -452,10 +543,15 @@ class _KChartWidgetState extends State<KChartWidget>
         //   - dx → vẫn scroll nến X như bình thường.
         //   - dy → forward outer scroll (KHÔNG pan chart Y).
         // Pinch (≥2 ngón) vẫn để chart xử lý scaleX bình thường ở nhánh dưới.
-        if (!_gestureInMain && details.pointerCount < 2) {
+        //
+        // Từ khi có strip trục giá riêng (§7), `mMainRect` không còn phủ hết
+        // chiều rộng nữa — kéo trên strip (trong hàng main) giờ cũng khiến
+        // `isInMainRect` trả false dù đó chính là gesture scaleY hợp lệ.
+        // Loại trừ rõ `_isScaleYGesture` ở đây để không bị nhánh này nuốt mất.
+        if (!_gestureInMain && !_isScaleYGesture && details.pointerCount < 2) {
           isOnTap = false;
           mScrollX = (mScrollX + details.focalPointDelta.dx / mScaleX)
-              .clamp(0.0, ChartPainter.maxScrollX)
+              .clamp(ChartPainter.minScrollX, ChartPainter.maxScrollX)
               .toDouble();
           final double dy = details.focalPointDelta.dy;
           if (dy != 0 && widget.onVerticalOverscroll != null) {
@@ -495,7 +591,7 @@ class _KChartWidgetState extends State<KChartWidget>
           // Pan Y chỉ active sau khi user đã scaleY qua vùng Positioned bên phải
           isOnTap = false;
           mScrollX = (mScrollX + details.focalPointDelta.dx / mScaleX)
-              .clamp(0.0, ChartPainter.maxScrollX)
+              .clamp(ChartPainter.minScrollX, ChartPainter.maxScrollX)
               .toDouble();
           if (mScaleY != 1.0) {
             final double dy = details.focalPointDelta.dy;
@@ -619,11 +715,13 @@ class _KChartWidgetState extends State<KChartWidget>
             size: Size(double.infinity, baseDimension.mDisplayHeight),
             painter: painter,
           ),
-          // Vùng scaleY + double-tap reset: width đồng bộ với xFrontPadding (co theo chart hẹp).
+          // Vùng double-tap reset: width đồng bộ với strip trục giá thật
+          // đang vẽ (§7.6/§7.7) — không còn xFrontPadding (đó là padding sau
+          // nến cuối, không phải bề rộng trục giá hiển thị). `bottom` chỉ
+          // tính tới hết main chart (loại vol/secondary/date) — cùng phạm vi
+          // dọc với gesture DRAG scaleY ở `onScaleStart` (xem `_isScaleYGesture`).
           // LayoutBuilder chỉ bọc Positioned (không bọc GestureDetector ngoài) để tránh
           // rebuild cả StreamBuilder → lỗi stream single-subscription.
-          // TODO: bottom offset giới hạn vùng scaleY chỉ trong main chart
-          // nếu muốn gesture phủ toàn bộ thì đổi lại bottom: 0
           Positioned(
             right: 0,
             top: 0,
@@ -633,11 +731,7 @@ class _KChartWidgetState extends State<KChartWidget>
                 widget.chartStyle.bottomPadding,
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final scaleYZoneWidth =
-                    BaseChartPainter.effectiveRightPaddingPx(
-                  widget.xFrontPadding,
-                  constraints.maxWidth,
-                );
+                final scaleYZoneWidth = _priceAxisWidthCache.value;
                 return GestureDetector(
                   onDoubleTap: () {
                     // double tap vùng phải → reset scaleY và offsetY về mặc định
@@ -689,8 +783,8 @@ class _KChartWidgetState extends State<KChartWidget>
         );
     aniX!.addListener(() {
       mScrollX = aniX!.value;
-      if (mScrollX <= 0) {
-        mScrollX = 0;
+      if (mScrollX <= ChartPainter.minScrollX) {
+        mScrollX = ChartPainter.minScrollX;
         _stopAnimation();
       } else if (mScrollX >= ChartPainter.maxScrollX) {
         mScrollX = ChartPainter.maxScrollX;

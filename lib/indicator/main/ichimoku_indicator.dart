@@ -39,7 +39,7 @@ class IchimokuIndicator extends MainIndicator<CandleEntity, IchimokuStyle> {
   }
 
   /// Shift luôn bằng Kijun period — KHÔNG hardcode, đổi `calcParams[1]` thì
-  /// shift đổi theo (xem ichimoku.md §2 "Bộ tham số").
+  /// shift đổi theo (xem mục Ichimoku ở `indicator.md`, root repo).
   int get shift => calcParams[1];
 
   /// Báo cho painter chừa `shift` slot tương lai bên phải nến cuối để mây
@@ -196,7 +196,8 @@ class IchimokuIndicator extends MainIndicator<CandleEntity, IchimokuStyle> {
 
   /// Tô mây giữa Span A/B — tách polygon tại điểm giao (nội suy tuyến tính)
   /// để đổi màu đúng giữa đoạn tăng/giảm, không tô sai màu cả đoạn khi 2
-  /// đường cắt nhau giữa `lastX`..`curX` (xem ichimoku.md §4.2 "Vẽ mây").
+  /// đường cắt nhau giữa `lastX`..`curX` (xem mục Ichimoku ở `indicator.md`,
+  /// root repo).
   void _drawCloud(
     Canvas canvas,
     double lastX,
@@ -299,8 +300,8 @@ class IchimokuIndicator extends MainIndicator<CandleEntity, IchimokuStyle> {
   }
 
   /// Sliding-window max, O(n) qua monotonic deque (giảm dần) — tránh
-  /// O(n×period) của vòng lặp naive (xem ichimoku.md §4.2 "Hiệu năng").
-  /// `null` cho tới khi đủ `period` phần tử (warm-up).
+  /// O(n×period) của vòng lặp naive (xem mục Ichimoku ở `indicator.md`,
+  /// root repo). `null` cho tới khi đủ `period` phần tử (warm-up).
   static List<double?> _slidingMax(List<double> values, int period) {
     final n = values.length;
     final out = List<double?>.filled(n, null);

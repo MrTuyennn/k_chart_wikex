@@ -4,6 +4,46 @@ import 'live_price_style.dart';
 
 export 'live_price_style.dart';
 
+/// Kiểu vẽ thân nến (candlestick mode, không áp dụng cho line chart) — cùng
+/// bộ tùy chọn "Candle style" của TradingView/Binance: tô đặc (mặc định) hay
+/// để rỗng ruột (chỉ vẽ viền) theo chiều tăng/giảm.
+///
+/// "Rỗng ruột" xác định theo `close` so với `open` của CHÍNH nến đó (không
+/// phải so với close phiên trước) — nến tăng = `close > open`. Bấc nến
+/// (high-low) LUÔN vẽ đặc bất kể [CandleBodyStyle] là gì; chỉ phần thân
+/// (open-close) đổi giữa tô đặc/chỉ viền.
+enum CandleBodyStyle {
+  /// Solid Candles — mặc định, luôn tô đặc cả 2 chiều (hành vi trước khi có
+  /// field này).
+  solid,
+
+  /// Hollow Candles (Up) — nến tăng (`close > open`) chỉ vẽ viền, nến giảm
+  /// vẫn tô đặc.
+  hollowUp,
+
+  /// Hollow Candles (Down) — nến giảm (`close < open`) chỉ vẽ viền, nến tăng
+  /// vẫn tô đặc.
+  hollowDown,
+
+  /// Hollow Candles — cả nến tăng lẫn giảm đều chỉ vẽ viền.
+  hollow,
+}
+
+/// Nguồn sự thật DUY NHẤT cho "nến chiều [rising] có nên vẽ rỗng ruột theo
+/// style này không" — dùng chung bởi `MainRenderer.drawCandle` (chart thật)
+/// VÀ `CandleStyleIcon`/`CandleStylePreview` (icon/preview minh hoạ trong
+/// UI chọn style). Trước đây switch này bị chép tay lặp lại ở cả 3 chỗ
+/// (mỗi chỗ tự comment "phải đồng bộ với MainRenderer") — gộp về đây để
+/// sửa 1 lần, không có rủi ro 1 chỗ quên đồng bộ khi công thức đổi.
+extension CandleBodyStyleX on CandleBodyStyle {
+  bool isHollow({required bool rising}) => switch (this) {
+    CandleBodyStyle.solid => false,
+    CandleBodyStyle.hollowUp => rising,
+    CandleBodyStyle.hollowDown => !rising,
+    CandleBodyStyle.hollow => true,
+  };
+}
+
 /// Màu cho main chart (nến hoặc line chart — 2 cách vẽ khác nhau của cùng
 /// 1 chuỗi giá, `isLine` chọn cái nào). Tách khỏi `KChartColors` để dễ custom
 /// riêng, tương tự các `XxxStyle` của indicator.
@@ -24,12 +64,17 @@ class CandleStyle {
   /// max/min, now-price. Mặc định fontSize 10.
   final TextStyle textStyle;
 
+  /// kiểu vẽ thân nến — xem [CandleBodyStyle]. Mặc định `solid` (tô đặc,
+  /// giữ nguyên hành vi cũ).
+  final CandleBodyStyle bodyStyle;
+
   const CandleStyle({
-    this.upColor = const Color(0xFF14AD8F),
-    this.dnColor = const Color(0xFFD5405D),
+    this.upColor = const Color(0xFF0ABE82),
+    this.dnColor = const Color(0xFFF54B55),
     this.kLineColor = const Color(0xFF217AFF),
     this.kLineFillColors = const [Color(0x80217aff), Color(0x00217AFF)],
     this.textStyle = const TextStyle(fontSize: 10),
+    this.bodyStyle = CandleBodyStyle.solid,
   });
 }
 
@@ -54,8 +99,8 @@ class VolumeStyle {
   final TextStyle textStyle;
 
   const VolumeStyle({
-    this.upColor = const Color(0xFF14AD8F),
-    this.dnColor = const Color(0xFFD5405D),
+    this.upColor = const Color(0xFF0ABE82),
+    this.dnColor = const Color(0xFFF54B55),
     this.ma5Color = const Color(0xFFFFC634),
     this.ma10Color = const Color(0xff35cdac),
     this.textStyle = const TextStyle(fontSize: 10),
