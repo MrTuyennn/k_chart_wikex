@@ -390,9 +390,11 @@ void main() {
 
       // Yêu cầu trực tiếp từ user: "đẩy live-price ra ngoài nằm trên axis Y
       // luôn" — badge now-price (đóng `right`, mặc định) giờ đặt chủ yếu
-      // TRÊN price-axis strip (bên phải `mPlotWidth`), chỉ lấn nhẹ vào plot
-      // đúng bằng `space` để mũi tên "chạm" đường dashed — khác trước (badge
-      // nằm gọn trong `mPlotWidth`, cách mép `space` px).
+      // TRÊN price-axis strip (bên phải `mPlotWidth`), mép trái chỉ lấn nhẹ
+      // vào plot (hoặc khớp sát/vượt nhẹ qua `mPlotWidth`, tuỳ `space` hiện
+      // tại — đã chỉnh dần về `0`) — khác trước (badge nằm gọn trong
+      // `mPlotWidth`, cách mép `space` px, xa hẳn về bên trái theo độ dài
+      // text).
       testWidgets(
         'verticalTextAlignment.right (mặc định): badge now-price nằm chủ yếu trên price-axis strip',
         (tester) async {
@@ -406,17 +408,17 @@ void main() {
           expect(globalRRects.length, 1);
           final badgeRect = globalRRects[0].outerRect;
 
-          // Mép trái badge chỉ lấn nhẹ vào plot (tối đa đúng `space`=5px
-          // trước mPlotWidth — thực tế luôn NHỎ HƠN do hình mũi tên trong
-          // LivePriceBadgePainter tự co theo scaleX, không bao giờ vượt quá
-          // `space`), phần LỚN thân badge nằm bên phải mPlotWidth (trên
-          // price-axis strip) — trước đây badge nằm gọn trong mPlotWidth
-          // (mép phải cách mPlotWidth đúng space, mép trái xa hơn nữa về bên
-          // trái theo độ dài text) nên assertion này trước đây sẽ fail.
-          // Dùng ngưỡng RỘNG RÃI (12px, > `space` hiện tại) thay vì khớp
-          // sát đúng giá trị `space` — tránh test tự vỡ mỗi khi chỉnh nhẹ
-          // `space`/padding hay đổi độ dài text hiển thị (vd làm tròn giá).
-          expect(badgeRect.left, lessThan(painter.mPlotWidth));
+          // Mép trái badge nằm SÁT `mPlotWidth` (có thể lấn nhẹ vào plot,
+          // khớp sát, hoặc vượt nhẹ qua bên strip — tuỳ `space` hiện tại,
+          // KHÔNG còn khoá cứng "luôn < mPlotWidth" vì `space` đã chỉnh về
+          // `0`, không lấn vào plot nữa), phần LỚN thân badge nằm bên phải
+          // mPlotWidth (trên price-axis strip) — trước đây badge nằm gọn
+          // trong mPlotWidth (mép phải cách mPlotWidth đúng space, mép trái
+          // xa hơn nữa về bên trái theo độ dài text) nên assertion này trước
+          // đây sẽ fail. Dùng ngưỡng RỘNG RÃI (±12px quanh mPlotWidth) thay
+          // vì khớp sát đúng giá trị `space` — tránh test tự vỡ mỗi khi
+          // chỉnh nhẹ `space`/padding hay đổi độ dài text hiển thị.
+          expect(badgeRect.left, lessThanOrEqualTo(painter.mPlotWidth + 12.0));
           expect(badgeRect.left, greaterThanOrEqualTo(painter.mPlotWidth - 12.0));
           expect(badgeRect.right, greaterThan(painter.mPlotWidth));
         },

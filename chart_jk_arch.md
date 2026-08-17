@@ -546,7 +546,7 @@ Khi `bidPrice` VÀ `askPrice` cùng non-null, vẽ thêm 1 box nhỏ 2 ô xếp 
 **Vị trí ngang — "về phía tâm plot", không cố định 1 phía:**
 
 ```dart
-// Mép trái/phải badge now-price — CÙNG công thức drawNowPrice dùng (paddingX=6, paddingY=4, space=5.0,
+// Mép trái/phải badge now-price — CÙNG công thức drawNowPrice dùng (paddingX=3, paddingY=3, space=0.0,
 // gộp thành static const _liveBadgePaddingX/_liveBadgePaddingY/_liveBadgeSpace dùng chung giữa 2 hàm):
 flagBadgeWidth = priceTp.width + _liveBadgePaddingX * 2
 flagLeft = verticalTextAlignment == right
@@ -561,7 +561,7 @@ left = verticalTextAlignment == right
     : flagRight + gap             // left: badge sát trái  -> box qua PHẢI badge
 ```
 
-> **Vì sao không cố định "luôn bên trái badge":** ban đầu box được đặt cố định bên trái badge bất kể alignment. Với `right` (mặc định) điều đó đúng — badge sát mép phải, box lùi vào giữa plot. Nhưng với `left`, badge đã sát mép TRÁI plot (`flagLeft = space = 5.0`) — đặt thêm box về bên trái nữa cho ra toạ độ X **âm**, ngoài `clipRect(0, 0, size.width, size.height)` của `paint()`: box + text vẽ hoàn toàn ngoài canvas, vô hình. Phát hiện qua `/code-review`, sửa bằng quy tắc mirror theo alignment ở trên — port sang platform khác PHẢI giữ đúng nhánh `left`/`right` này, không được rút gọn về 1 công thức chung.
+> **Vì sao không cố định "luôn bên trái badge":** ban đầu box được đặt cố định bên trái badge bất kể alignment. Với `right` (mặc định) điều đó đúng — badge sát mép phải, box lùi vào giữa plot. Nhưng với `left`, badge đã sát mép TRÁI plot (`flagLeft = space = 0.0`) — đặt thêm box về bên trái nữa cho ra toạ độ X **âm**, ngoài `clipRect(0, 0, size.width, size.height)` của `paint()`: box + text vẽ hoàn toàn ngoài canvas, vô hình. Phát hiện qua `/code-review`, sửa bằng quy tắc mirror theo alignment ở trên — port sang platform khác PHẢI giữ đúng nhánh `left`/`right` này, không được rút gọn về 1 công thức chung.
 >
 > **`flagLeft` (nhánh `right`) đã đổi công thức khi badge now-price bị đẩy ra ngoài axis (§5.9)** — `left`/box của Ask/Bid tự động "bám" theo vị trí mới của badge (không cần sửa gì thêm ở nhánh box), vì cả 2 công thức dùng chung `flagLeft` làm điểm neo.
 
@@ -586,7 +586,7 @@ Theo yêu cầu trực tiếp ("đẩy live-price ra ngoài nằm trên axis Y l
 // TRƯỚC: offsetX = mPlotWidth - tp.width - paddingX*2 - space   (badge nằm gọn trong mPlotWidth,
 //         mép phải cách mPlotWidth đúng `space`)
 // SAU:
-offsetX = mPlotWidth - space   // chỉ lấn `space` (=5) px vào plot — đúng bằng bề rộng phần mũi tên của
+offsetX = mPlotWidth - space   // space = 0 -> không còn lấn vào plot, mép trái badge khớp đúng `mPlotWidth`;
                                  // LivePriceBadgePainter (trỏ vào chart, "chạm" đường dashed) — phần
                                  // THÂN badge còn lại (số giá) nằm hoàn toàn trên price-axis strip.
 ```
@@ -594,8 +594,8 @@ offsetX = mPlotWidth - space   // chỉ lấn `space` (=5) px vào plot — đú
 `verticalTextAlignment: left` không đổi (`offsetX = space`) — không có price-axis strip bên trái để "đẩy ra".
 
 **Padding quanh chữ (trong) VÀ khoảng lấn vào plot (ngoài) đã điều chỉnh** theo các yêu cầu trực tiếp tiếp theo:
-- `_liveBadgePaddingX`/`_liveBadgePaddingY` (padding TRONG, quanh chữ) chốt ở **6** / **4** (từng thử tăng lên 8/5 theo mẫu hình MEXC rồi giảm lại theo yêu cầu tiếp theo).
-- `_liveBadgeSpace` (padding NGOÀI — khoảng badge lấn vào plot khi đóng `right`, hoặc khoảng cách mép khi đóng `left`) chốt ở **5** (từng thử tăng lên 8 rồi revert lại — yêu cầu trực tiếp "nằm ra ngoài cùng và cách 5px thui").
+- `_liveBadgePaddingX`/`_liveBadgePaddingY` (padding TRONG, quanh chữ) chốt ở **3** / **3** (từng thử tăng lên 8/5 theo mẫu hình MEXC, giảm dần 6/4 → 5/3 → 3/3, đợt cuối chỉnh trực tiếp trong code).
+- `_liveBadgeSpace` (padding NGOÀI — khoảng badge lấn vào plot khi đóng `right`, hoặc khoảng cách mép khi đóng `left`) chốt ở **0** (từng thử tăng lên 8, revert về 5, giảm dần 5→3→0 — đợt cuối chỉnh trực tiếp trong code). Ở `0`: đóng `right`, mép trái badge khớp CHÍNH XÁC `mPlotWidth` (không còn lấn vào plot); đóng `left`, badge sát tuyệt đối mép trái canvas (`offsetX = 0`).
 - Cả 3 hằng số dùng chung giữa `drawNowPrice` và `drawBidAsk` (`flagBadgeWidth`/`flagLeft`) — đổi 1 nơi, tự động khớp cả 2 hàm.
 - **Strip trục giá bên phải cũng rộng ra tương ứng** (yêu cầu "cho axisY rộng ra tí") — xem `BaseChartPainter.updatePriceAxisWidth`: `clamp(maxLabelWidth + 20, 56, 104)` (trước: `+14, 48, 96`), vẫn làm tròn lên bội số 8 + hysteresis y hệt cũ. Xem `CHART_AXES.md` §7.6 (đã cập nhật đồng bộ).
 

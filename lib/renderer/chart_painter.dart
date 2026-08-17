@@ -46,6 +46,7 @@ class ChartPainter extends BaseChartPainter {
   late Paint paintCross, selectPointPaint, selectorBorderPaint;
   late Paint nowPriceLinePaint;
   late Paint _bgPaint;
+
   /// Viền khung phân cách plot | price-axis-strip | time-axis (§7.5) — tách
   /// riêng khỏi `gridPaint` của từng renderer (chỉ dùng nội bộ panel đó).
   late Paint gridSeparatorPaint;
@@ -148,7 +149,9 @@ class ChartPainter extends BaseChartPainter {
   @override
   void initChartRenderer() {
     final double priceRange = mMainMaxValue - mMainMinValue;
-    final double pricePad = priceRange > 0 ? priceRange * _kPricePadFraction : 0;
+    final double pricePad = priceRange > 0
+        ? priceRange * _kPricePadFraction
+        : 0;
     mMainRenderer = MainRenderer(
       mMainRect,
       mPriceAxisRect,
@@ -336,9 +339,11 @@ class ChartPainter extends BaseChartPainter {
     // Dùng mVisibleStartIndex/mVisibleStopIndex (không phải mRealStartIndex/
     // mRealStopIndex) — vol/secondary không có khái niệm đường bị dịch nên
     // không cần vùng margin rộng hơn viewport, chỉ tốn thêm draw call vô ích.
-    for (int i = mVisibleStartIndex;
-        datas != null && i <= mVisibleStopIndex;
-        i++) {
+    for (
+      int i = mVisibleStartIndex;
+      datas != null && i <= mVisibleStopIndex;
+      i++
+    ) {
       KLineEntity? curPoint = datas?[i];
       if (curPoint == null) continue;
       KLineEntity lastPoint = i == 0 ? curPoint : datas![i - 1];
@@ -395,7 +400,9 @@ class ChartPainter extends BaseChartPainter {
     // (tick.x, không dịch) — y hệt cách nến/volume bị canvas cắt tự nhiên khi
     // trượt ra khỏi viewport, cho cảm giác trượt liên tục thay vì bật/tắt.
     canvas.save();
-    canvas.clipRect(Rect.fromLTRB(0, mDateRect.top, mPlotWidth, mDateRect.bottom));
+    canvas.clipRect(
+      Rect.fromLTRB(0, mDateRect.top, mPlotWidth, mDateRect.bottom),
+    );
     for (final tick in mTimeTicks) {
       TextPainter tp = getTextPainter(tick.label, null);
       double y = mDateRect.top + (mBottomPadding - tp.height) / 2;
@@ -590,7 +597,10 @@ class ChartPainter extends BaseChartPainter {
     TextPainter tp = TextPainter(
       text: TextSpan(
         text: NumberUtil.formatFixed(value, fixedLength) ?? '',
-        style: resolveTextStyle(chartColors.livePriceStyle.textStyle, Colors.white),
+        style: resolveTextStyle(
+          chartColors.livePriceStyle.textStyle,
+          Colors.white,
+        ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
@@ -632,13 +642,19 @@ class ChartPainter extends BaseChartPainter {
   // paddingX/paddingY/space của badge live price (drawNowPrice) — tách
   // thành static const DÙNG CHUNG với [drawBidAsk] (khác trước: hằng số
   // riêng biệt dễ lệch nhau nếu chỉ sửa 1 bên — /code-review finding).
+  // paddingX/paddingY (padding TRONG, quanh chữ) giảm dần 6→5→3 / 4→3 theo
+  // các yêu cầu trực tiếp liên tiếp ("padding trong của liveprice nhỏ lại
+  // tí"), chỉnh trực tiếp trong code ở đợt cuối (paddingX 5→3).
   // space (padding NGOÀI, khoảng lấn vào plot khi đóng `right`/khoảng cách
-  // mép khi đóng `left`) revert lại 8→5 theo yêu cầu trực tiếp ("nằm ra
-  // ngoài cùng và cách 5px thui") — badge lấn vào plot ÍT hơn, nằm ra ngoài
-  // (trên price-axis strip) NHIỀU hơn.
-  static const double _liveBadgePaddingX = 6.0;
-  static const double _liveBadgePaddingY = 4.0;
-  static const double _liveBadgeSpace = 5.0;
+  // mép khi đóng `left`) revert lại 8→5 rồi giảm dần 5→3→0 theo các yêu cầu
+  // trực tiếp ("nằm ra ngoài cùng và cách 5px thui", "padding ngoài bên phải
+  // cho thấp lại", chỉnh trực tiếp trong code ở đợt cuối) — ở `0`, mép trái
+  // badge (đóng `right`) khớp CHÍNH XÁC `mPlotWidth`, không còn lấn vào plot
+  // (trước đó lấn nhẹ vài px để mũi tên "chạm" đường dashed); đóng `left`,
+  // badge sát tuyệt đối mép trái canvas (`offsetX = 0`, không còn khoảng hở).
+  static const double _liveBadgePaddingX = 3.0;
+  static const double _liveBadgePaddingY = 3.0;
+  static const double _liveBadgeSpace = 0;
 
   // Padding X/Y trong mỗi ô, khe hở giữa Ask/Bid, khe hở giữa box và badge
   // live price — tách thành static const cho dễ chỉnh, không dùng ở đâu
@@ -676,12 +692,14 @@ class ChartPainter extends BaseChartPainter {
     final double maxY = _applyScaleY(getMainY(mMainLowMinValue));
     final double centerY = _applyScaleY(getMainY(value)).clamp(minY, maxY);
 
-    final textStyle = resolveTextStyle(chartColors.livePriceStyle.textStyle, Colors.white);
-    TextPainter buildTp(String text, [TextStyle? style]) =>
-        TextPainter(
-          text: TextSpan(text: text, style: style ?? textStyle),
-          textDirection: TextDirection.ltr,
-        )..layout();
+    final textStyle = resolveTextStyle(
+      chartColors.livePriceStyle.textStyle,
+      Colors.white,
+    );
+    TextPainter buildTp(String text, [TextStyle? style]) => TextPainter(
+      text: TextSpan(text: text, style: style ?? textStyle),
+      textDirection: TextDirection.ltr,
+    )..layout();
 
     // Nền box giờ là bgColor (trắng/đen theo style sáng/tối, KHÔNG phải màu
     // đặc upColor/dnColor như trước) + viền màu theo bid/ask (yêu cầu trực
@@ -710,7 +728,8 @@ class ChartPainter extends BaseChartPainter {
 
     final double rowHeight = askTp.height + _bidAskPaddingY * 2;
     final double boxWidth =
-        [askTp.width, bidTp.width].reduce((a, b) => a > b ? a : b) + _bidAskPaddingX * 2;
+        [askTp.width, bidTp.width].reduce((a, b) => a > b ? a : b) +
+        _bidAskPaddingX * 2;
     final double boxHeight = rowHeight * 2 + _bidAskCellGap;
 
     // Mép trái/phải của badge live price (drawNowPrice) — CÙNG công thức
