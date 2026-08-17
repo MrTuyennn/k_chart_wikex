@@ -75,7 +75,19 @@ class KChartWidget extends StatefulWidget {
   final VerticalTextAlignment verticalTextAlignment;
   final bool isTrendLine;
   /// Padding phải sau nến cuối (px tại chart ≥375px). Chart hẹp hơn tự co — xem [BaseChartPainter.effectiveRightPaddingPx].
+  /// Mặc định `40` (giảm từ `100` theo yêu cầu trực tiếp — vị trí nghỉ mặc
+  /// định lúc mới mở chart gần sát trục giá hơn). Nếu cần lộ thêm khoảng
+  /// trống, dùng [xOverscrollPadding] (user tự kéo) thay vì tăng số này lên.
   final double xFrontPadding;
+
+  /// Khoảng overscroll TỐI ĐA (px tại chart ≥375px, co giãn theo bề rộng hẹp
+  /// giống [xFrontPadding]) user được phép kéo QUÁ vị trí nghỉ mặc định (đã
+  /// có sẵn [xFrontPadding]) để TỰ lộ thêm khoảng trống bên phải — giống
+  /// hành vi Binance/MEXC (kéo qua trái quá mép, tạo thêm chỗ trống nhìn giá
+  /// hiện tại). Kéo quá rồi thả tay: GIỮ NGUYÊN vị trí đã kéo (không tự bật
+  /// về) — user tự kéo ngược nếu muốn về lại. `0` = tắt hẳn, quay lại hành vi
+  /// chặn cứng `scrollX` ở vị trí nghỉ như trước.
+  final double xOverscrollPadding;
   final WidgetDetailBuilder detailBuilder;
   /// Giới hạn zoom ngang (pinch) và clamp [KChartScaleState.scaleX] khi lưu/khôi phục.
   final double minScale;
@@ -83,17 +95,16 @@ class KChartWidget extends StatefulWidget {
   final double? livePrice;
 
   /// Best bid (giá mua cao nhất)/best ask (giá bán thấp nhất) từ order book —
-  /// khi CẢ HAI cùng non-null, vẽ 1 box gộp (đóng theo `verticalTextAlignment`
-  /// — mặc định `right`, sát trục giá bên phải): cột trái 2 ô Ask (đỏ,
-  /// trên)/Bid (xanh, dưới) xếp chồng, cột phải 1 ô live price cao gấp đôi —
-  /// tất cả neo tại ĐÚNG Y của đường now-price (thay hẳn badge now-price cũ,
-  /// tránh hiện live price 2 nơi cùng lúc). Thiếu 1 trong 2
-  /// (`null`) thì không vẽ box này — [livePrice] tự rơi về badge now-price
-  /// gốc (flag + số, đóng theo `verticalTextAlignment`) như chưa từng có
-  /// `bidPrice`/`askPrice`, không có fallback nào giữa `bidPrice`/`askPrice`
-  /// với nhau. Dùng lại đúng màu `chartColors.livePriceStyle.upColor`/
-  /// `dnColor` (bid xanh/ask đỏ, khớp quy ước buy=up/sell=down đã dùng cho
-  /// now-price) — ô live price cũng đổi màu up/down y hệt badge cũ.
+  /// khi CẢ HAI cùng non-null, vẽ thêm 1 box RIÊNG (đóng theo
+  /// `verticalTextAlignment` — mặc định `right`, sát trục giá bên phải): 2 ô
+  /// Ask (đỏ, trên)/Bid (xanh, dưới) xếp chồng, đặt ngay BÊN TRÁI badge live
+  /// price (cùng tâm dọc, không đè lên nhau) — box tự "di chuyển theo" live
+  /// price vì cả 2 dùng chung Y tính lại mỗi frame. Badge live price (flag +
+  /// số) LUÔN vẽ độc lập, ĐÚNG vị trí/hành vi như khi chưa có `bidPrice`/
+  /// `askPrice` — 2 field này chỉ THÊM box Ask/Bid bên cạnh, không ảnh hưởng
+  /// gì tới badge. Thiếu 1 trong 2 (`null`) thì không vẽ box Ask/Bid. Dùng
+  /// lại đúng màu `chartColors.livePriceStyle.upColor`/`dnColor` (bid xanh/
+  /// ask đỏ, khớp quy ước buy=up/sell=down đã dùng cho now-price).
   final double? bidPrice;
   final double? askPrice;
 
@@ -135,7 +146,8 @@ class KChartWidget extends StatefulWidget {
     this.askPrice,
     this.bidLabel = 'Bid',
     this.askLabel = 'Ask',
-    this.xFrontPadding = 100,
+    this.xFrontPadding = 40,
+    this.xOverscrollPadding = 200,
     this.mainIndicators = const [],
     this.secondaryIndicators = const [],
     // this.onSecondaryTap,
@@ -308,7 +320,10 @@ class _KChartWidgetState extends State<KChartWidget>
     mScaleX = saved.scaleX;
     mScaleY = saved.scaleY.clamp(_minScaleY, _maxScaleY);
     mScrollX = saved.scrollX
-        .clamp(0.0, ChartPainter.maxScrollX > 0 ? ChartPainter.maxScrollX : 0.0)
+        .clamp(
+          ChartPainter.minScrollX,
+          ChartPainter.maxScrollX > 0 ? ChartPainter.maxScrollX : 0.0,
+        )
         .toDouble();
     mOffsetY = _clampOffsetY(mOffsetY);
     _lastScale = mScaleX;
@@ -316,8 +331,9 @@ class _KChartWidgetState extends State<KChartWidget>
     if (reclampScrollAfterLayout) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || widget.chartScale != external) return;
-        final clamped =
-            saved.scrollX.clamp(0.0, ChartPainter.maxScrollX).toDouble();
+        final clamped = saved.scrollX
+            .clamp(ChartPainter.minScrollX, ChartPainter.maxScrollX)
+            .toDouble();
         if (mScrollX != clamped) {
           mScrollX = clamped;
           setState(() {});
@@ -420,6 +436,7 @@ class _KChartWidgetState extends State<KChartWidget>
       lines: List<TrendLine>.of(lines), //For TrendLine
       sink: mInfoWindowStream.sink,
       xFrontPadding: widget.xFrontPadding,
+      xOverscrollPadding: widget.xOverscrollPadding,
       priceAxisWidthCache: _priceAxisWidthCache,
       timeTickPlanner: _timeTickPlanner,
       isTrendLine: widget.isTrendLine, //For TrendLine
@@ -534,7 +551,7 @@ class _KChartWidgetState extends State<KChartWidget>
         if (!_gestureInMain && !_isScaleYGesture && details.pointerCount < 2) {
           isOnTap = false;
           mScrollX = (mScrollX + details.focalPointDelta.dx / mScaleX)
-              .clamp(0.0, ChartPainter.maxScrollX)
+              .clamp(ChartPainter.minScrollX, ChartPainter.maxScrollX)
               .toDouble();
           final double dy = details.focalPointDelta.dy;
           if (dy != 0 && widget.onVerticalOverscroll != null) {
@@ -574,7 +591,7 @@ class _KChartWidgetState extends State<KChartWidget>
           // Pan Y chỉ active sau khi user đã scaleY qua vùng Positioned bên phải
           isOnTap = false;
           mScrollX = (mScrollX + details.focalPointDelta.dx / mScaleX)
-              .clamp(0.0, ChartPainter.maxScrollX)
+              .clamp(ChartPainter.minScrollX, ChartPainter.maxScrollX)
               .toDouble();
           if (mScaleY != 1.0) {
             final double dy = details.focalPointDelta.dy;
@@ -766,8 +783,8 @@ class _KChartWidgetState extends State<KChartWidget>
         );
     aniX!.addListener(() {
       mScrollX = aniX!.value;
-      if (mScrollX <= 0) {
-        mScrollX = 0;
+      if (mScrollX <= ChartPainter.minScrollX) {
+        mScrollX = ChartPainter.minScrollX;
         _stopAnimation();
       } else if (mScrollX >= ChartPainter.maxScrollX) {
         mScrollX = ChartPainter.maxScrollX;

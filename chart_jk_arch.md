@@ -70,6 +70,7 @@ KChartWidget  (state + gesture)
    │       ├─ drawDate()               (clip canvas theo mPlotWidth, vẽ label ở đúng vị trí thật — không phải full mWidth)
    │       ├─ drawText(getItem(mStopIndex))    (main + vol + secondaries)
    │       ├─ drawMaxAndMin() / drawNowPrice()     (qua _applyScaleY)
+   │       ├─ drawBidAsk()               (chạy NGAY SAU drawNowPrice — box Ask/Bid, chỉ khi bidPrice+askPrice cùng non-null, xem §5.8)
    │       └─ drawCrossLineText() (nếu long-press/tap — span cả mWidth, KHÔNG bị giới hạn mPlotWidth, xem CHART_AXES.md §7.5)
    └─ Positioned (right:0) + LayoutBuilder → w = BaseChartPainter.priceAxisWidth
        ─ vùng gesture scaleY + double-tap reset scaleY/offsetY (khớp đúng strip giá đang vẽ, §7.7)
@@ -468,7 +469,9 @@ File: `lib/k_chart_widget.dart`.
 | `materialInfoDialog`    | `true`                    | Style dialog Material vs Cupertino.                   |
 | `timeFormat`            | `TimeFormat.yearMonthDay` | Format thời gian dưới X axis.                         |
 | `livePrice`             | `null`                    | Giá realtime override cho now price.                  |
-| `xFrontPadding`         | `100`                     | Padding phải sau nến cuối (px tại chart ≥375px).      |
+| `bidPrice`/`askPrice`   | `null`                    | Best bid/best ask từ order book — vẽ thêm box Ask/Bid riêng, cạnh badge now-price. Xem §5.8. |
+| `bidLabel`/`askLabel`   | `'Bid'`/`'Ask'`           | Text prefix trong box Ask/Bid — đổi cho i18n.         |
+| `xFrontPadding`         | `40`                      | Padding phải sau nến cuối (px tại chart ≥375px). Giảm từ `100` theo yêu cầu trực tiếp — xem §12.11. |
 | `verticalTextAlignment` | `right`                   | `left` / `right` — vị trí label giá dọc.              |
 | `fixedLength`           | `2`                       | Số chữ số thập phân format giá.                       |
 
@@ -483,6 +486,7 @@ File: `lib/k_chart_widget.dart`.
 | `flingCurve`       | `Curves.decelerate` | Curve animation fling.               |
 | `mBaseHeight`      | `360`               | Height (px) của main chart panel.    |
 | `mSecondaryHeight` | `mBaseHeight * 0.2` | Height (px) của mỗi secondary panel. |
+| `xOverscrollPadding` | `200`              | Overscroll TỐI ĐA (px tại chart ≥375px) — user kéo quá vị trí nghỉ mặc định (`scrollX = 0`) để tự lộ thêm khoảng trống bên phải (giống Binance/MEXC). Thả tay giữ nguyên vị trí, không tự bật về. `0` = tắt hẳn. Xem §12.10. |
 
 ### 5.4 Load more / callback
 
@@ -530,6 +534,72 @@ KChartWidget(
   // ...
 )
 ```
+
+### 5.8 Bid/Ask box (order book) — `bidPrice`/`askPrice`
+
+File: `lib/renderer/chart_painter.dart` — `ChartPainter.drawBidAsk` (chạy ngay sau `drawNowPrice` trong `paint()`, xem sơ đồ §1).
+
+Khi `bidPrice` VÀ `askPrice` cùng non-null, vẽ thêm 1 box nhỏ 2 ô xếp chồng — Ask (đỏ, `chartColors.livePriceStyle.dnColor`) ở trên, Bid (xanh, `chartColors.livePriceStyle.upColor`) ở dưới — đặt CẠNH badge now-price (do `drawNowPrice` vẽ, không đổi gì cả — badge vẫn luôn vẽ độc lập, kể cả khi có `bidPrice`/`askPrice`). Thiếu 1 trong 2 (`null`) thì không vẽ box này.
+
+**Vị trí ngang — "về phía tâm plot", không cố định 1 phía:**
+
+```dart
+// Mép trái/phải badge now-price — CÙNG công thức drawNowPrice dùng (paddingX=6, paddingY=4, space=8.0,
+// gộp thành static const _liveBadgePaddingX/_liveBadgePaddingY/_liveBadgeSpace dùng chung giữa 2 hàm):
+flagBadgeWidth = priceTp.width + _liveBadgePaddingX * 2
+flagLeft = verticalTextAlignment == right
+    ? mPlotWidth - _liveBadgeSpace    // badge đẩy ra ngoài, nằm TRÊN price-axis strip (xem §12.11) —
+                                        // chỉ lấn `space` px vào plot, KHÔNG trừ thêm flagBadgeWidth như trước
+    : _liveBadgeSpace                  // badge sát mép trái (không có price-axis strip bên trái, không đổi)
+flagRight = flagLeft + flagBadgeWidth
+
+// Box luôn về phía TÂM PLOT so với badge — KHÔNG cố định "luôn bên trái":
+left = verticalTextAlignment == right
+    ? flagLeft - gap - boxWidth   // right: badge sát phải -> box qua TRÁI badge
+    : flagRight + gap             // left: badge sát trái  -> box qua PHẢI badge
+```
+
+> **Vì sao không cố định "luôn bên trái badge":** ban đầu box được đặt cố định bên trái badge bất kể alignment. Với `right` (mặc định) điều đó đúng — badge sát mép phải, box lùi vào giữa plot. Nhưng với `left`, badge đã sát mép TRÁI plot (`flagLeft = space = 5.0`) — đặt thêm box về bên trái nữa cho ra toạ độ X **âm**, ngoài `clipRect(0, 0, size.width, size.height)` của `paint()`: box + text vẽ hoàn toàn ngoài canvas, vô hình. Phát hiện qua `/code-review`, sửa bằng quy tắc mirror theo alignment ở trên — port sang platform khác PHẢI giữ đúng nhánh `left`/`right` này, không được rút gọn về 1 công thức chung.
+>
+> **`flagLeft` (nhánh `right`) đã đổi công thức khi badge now-price bị đẩy ra ngoài axis (§5.9)** — `left`/box của Ask/Bid tự động "bám" theo vị trí mới của badge (không cần sửa gì thêm ở nhánh box), vì cả 2 công thức dùng chung `flagLeft` làm điểm neo.
+
+**Vị trí dọc — LUÔN center theo Y của badge, không có ngoại lệ:**
+
+```dart
+centerY = _applyScaleY(getMainY(value)).clamp(minY, maxY)   // value = livePrice ?? datas.last.close — CÙNG value/công thức drawNowPrice dùng cho đường dashed
+top = centerY - boxHeight / 2      // box 2 hàng, badge 1 hàng -> box vươn đều 2 phía quanh Y badge
+```
+
+> **Không kẹp `top` vào `[minY, maxY]` theo chiều cao box** (khác badge now-price, vốn tự kẹp theo cách riêng của nó). Đây là đánh đổi CỐ Ý theo yêu cầu trực tiếp "luôn luôn căn giữa so với live price trong mọi case": khi giá sát đỉnh/đáy dải hiển thị, box có thể tràn nhẹ ra ngoài `mMainRect` (vào phần padding trên/panel volume dưới) thay vì bị đẩy lệch tâm. Port phải giữ đúng: **ưu tiên căn giữa tuyệt đối hơn ở gọn trong `mMainRect`**, cho riêng box này (không áp dụng ngược lại cho badge now-price).
+
+**Không throttle/toggle nào riêng cho việc vẽ** — mỗi lần `bidPrice`/`askPrice` đổi (`ChartPainter.shouldRepaint` so sánh field này) là 1 lần repaint toàn bộ, giống mọi field khác. App tự quyết định khi nào truyền giá trị thật vs `null` (xem ghi chú hiệu năng trong `README.md#bid-ask-badges-order-book` — pattern khuyến nghị: truyền thẳng `null` khi không hiển thị, không phải "tính rồi ẩn UI").
+
+### 5.9 Vị trí badge now-price — đẩy ra ngoài, nằm trên price-axis strip
+
+File: `lib/renderer/chart_painter.dart` — `ChartPainter.drawNowPrice`.
+
+Theo yêu cầu trực tiếp ("đẩy live-price ra ngoài nằm trên axis Y luôn"), với `verticalTextAlignment: right` (mặc định), badge now-price giờ đặt CHỦ YẾU trên `mPriceAxisRect` (strip trục giá bên phải) thay vì nằm gọn trong `mPlotWidth` như trước:
+
+```dart
+// TRƯỚC: offsetX = mPlotWidth - tp.width - paddingX*2 - space   (badge nằm gọn trong mPlotWidth,
+//         mép phải cách mPlotWidth đúng `space`)
+// SAU:
+offsetX = mPlotWidth - space   // chỉ lấn `space` (=5) px vào plot — đúng bằng bề rộng phần mũi tên của
+                                 // LivePriceBadgePainter (trỏ vào chart, "chạm" đường dashed) — phần
+                                 // THÂN badge còn lại (số giá) nằm hoàn toàn trên price-axis strip.
+```
+
+`verticalTextAlignment: left` không đổi (`offsetX = space`) — không có price-axis strip bên trái để "đẩy ra".
+
+**Padding quanh chữ (trong) VÀ khoảng lấn vào plot (ngoài) đã điều chỉnh** theo các yêu cầu trực tiếp tiếp theo:
+- `_liveBadgePaddingX`/`_liveBadgePaddingY` (padding TRONG, quanh chữ) chốt ở **6** / **4** (từng thử tăng lên 8/5 theo mẫu hình MEXC rồi giảm lại theo yêu cầu tiếp theo).
+- `_liveBadgeSpace` (padding NGOÀI — khoảng badge lấn vào plot khi đóng `right`, hoặc khoảng cách mép khi đóng `left`) chốt ở **5** (từng thử tăng lên 8 rồi revert lại — yêu cầu trực tiếp "nằm ra ngoài cùng và cách 5px thui").
+- Cả 3 hằng số dùng chung giữa `drawNowPrice` và `drawBidAsk` (`flagBadgeWidth`/`flagLeft`) — đổi 1 nơi, tự động khớp cả 2 hàm.
+- **Strip trục giá bên phải cũng rộng ra tương ứng** (yêu cầu "cho axisY rộng ra tí") — xem `BaseChartPainter.updatePriceAxisWidth`: `clamp(maxLabelWidth + 20, 56, 104)` (trước: `+14, 48, 96`), vẫn làm tròn lên bội số 8 + hysteresis y hệt cũ. Xem `CHART_AXES.md` §7.6 (đã cập nhật đồng bộ).
+
+> **Ảnh hưởng dây chuyền tới box Ask/Bid (§5.8):** `drawBidAsk`'s `flagLeft` dùng CHUNG công thức này (đã cập nhật đồng bộ) — nên khi badge dịch ra ngoài, box Ask/Bid (luôn "bám" cạnh badge) cũng dịch theo, tự động tiến gần lại `mPlotWidth`/vùng nến hơn trước. Port PHẢI giữ 2 công thức (`drawNowPrice`'s `offsetX` và `drawBidAsk`'s `flagLeft`) khớp nhau tuyệt đối — lệch 1 trong 2 sẽ làm box và badge không còn khớp cạnh nhau như thiết kế.
+
+**Text hiển thị trong badge giữ nguyên số thập phân đầy đủ** (`NumberUtil.formatFixed(value, fixedLength)`), giống mọi nhãn giá khác — có thử LÀM TRÒN về số nguyên gần nhất theo yêu cầu trực tiếp ở 1 thời điểm, sau đó bị **revert lại** ("revert cái format giá của liveprice không cần phải làm tròn"). Không còn helper `_formatLivePrice`/file test `number_util_test.dart` liên quan — đã xoá cùng lúc revert.
 
 ---
 
@@ -1222,11 +1292,11 @@ double getMinTranslateX() {
 }
 ```
 
-| `mPlotWidth` (xFrontPadding=100) | Padding màn hình |
+| `mPlotWidth` (xFrontPadding=40, default hiện tại) | Padding màn hình |
 | --------------------------------- | ---------------- |
-| ≥ 375px                           | 100px            |
-| 250px                              | ~67px            |
-| 187px                              | ~50px            |
+| ≥ 375px                           | 40px             |
+| 250px                              | ~27px            |
+| 187px                              | ~20px            |
 
 > Trước khi có strip giá, hàm này dùng thẳng `mWidth` (= `mPlotWidth` lúc đó vì chưa có strip). `effectiveRightPaddingPx` vẫn còn dùng nguyên cho mục đích này; nó KHÔNG còn quyết định bề rộng vùng gesture scaleY nữa — xem [12.3](#123-scale).
 
@@ -1375,7 +1445,7 @@ if (_lastRender == null || now - _lastRender! > 16) {
 | `_dragStartedInTapMode` && 1 ngón | Di chuyển crosshair.                                               |
 | `_isScaleYGesture` && 1 ngón      | `mScaleY -= delta * 0.005`, clamp `[0.3, 5.0]`.                    |
 | `details.scale != 1.0` (≥2 ngón)  | `mScaleX = lastScale * scale`, clamp.                              |
-| 1 ngón drag tự do                 | `mScrollX += dx / mScaleX`. Pan Y chỉ active khi `mScaleY != 1.0`. |
+| 1 ngón drag tự do                 | `mScrollX += dx / mScaleX`, clamp `[ChartPainter.minScrollX, ChartPainter.maxScrollX]` (không còn `[0, maxScrollX]` — xem §12.10). Pan Y chỉ active khi `mScaleY != 1.0`. |
 
 **Gesture gate vol/secondary:**
 
@@ -1472,6 +1542,37 @@ void _maybeLoadMoreForNarrowData() {
 - **`addPostFrameCallback`**: `ChartPainter.maxScrollX` chỉ đúng **sau** khi `paint()` chạy xong với data hiện tại (`base_chart_painter.dart:247`), nên phải đợi hết frame mới đọc được giá trị mới nhất.
 - **`_narrowLoadRequestedForLength` (dedupe guard)**: `didUpdateWidget` fire trên **mọi** rebuild của parent, kể cả những rebuild không liên quan tới `datas` (đổi theme, đổi style...). Nếu không có guard này, mỗi rebuild trong lúc `isLoadingMore` chưa kịp được parent set `true` (thường bất đồng bộ, sau khi await API) sẽ gọi lại `onLoadMore(true)` → spam nhiều request trùng. Guard chỉ cho phép request lại khi `data.length` thực sự thay đổi so với lần request gần nhất.
 - **Giới hạn đã biết**: `ChartPainter.maxScrollX` là field `static`, dùng chung cho **mọi instance** `KChartWidget` trong app. Nếu có nhiều chart cùng render trong 1 frame (multi-chart view), giá trị đọc được trong `addPostFrameCallback` có thể là của chart khác paint sau cùng trong frame đó, không phải của chính widget này. Không ảnh hưởng nếu app chỉ hiển thị 1 chart tại 1 thời điểm.
+
+### 12.10 Overscroll bên phải — `xOverscrollPadding` (giống Binance/MEXC)
+
+File: `lib/renderer/base_chart_painter.dart` (`minScrollX`, `calculateValue`), `lib/k_chart_widget.dart` (mọi nơi clamp `mScrollX`).
+
+Từ trước, `scrollX` luôn bị chặn cứng ở `[0, maxScrollX]` — `0` là vị trí nghỉ mặc định (nến cuối cách mép plot đúng `xFrontPadding`), không cho kéo QUÁ vị trí đó. Giờ có thêm `BaseChartPainter.minScrollX` (static, cùng vòng đời `maxScrollX` — set lại mỗi `calculateValue()`):
+
+```dart
+minScrollX = min(0.0, -(effectiveRightPaddingPx(xOverscrollPadding, mPlotWidth) / scaleX));
+```
+
+- Dùng lại NGUYÊN `effectiveRightPaddingPx` (đã có sẵn cho `xFrontPadding`, §5.2) — overscroll co giãn theo bề rộng chart hẹp giống hệt cách `xFrontPadding` co giãn.
+- `xOverscrollPadding = 0` (mặc định ở `BaseChartPainter`/`ChartPainter` khi dựng trực tiếp, không qua `KChartWidget`) → `minScrollX = 0` → **không đổi hành vi cũ**.
+- `KChartWidget.xOverscrollPadding` mặc định `200` (từng là `150`, tăng thêm theo yêu cầu trực tiếp) — luôn bật ở tầng widget.
+- `min(0.0, ...)`: chốt cứng tại NGUỒN, không phụ thuộc `xOverscrollPadding` không âm. Lý do: nếu `xOverscrollPadding` bị truyền ÂM (dùng sai, không có validate) VÀ `maxScrollX <= 0` (chart không có gì để scroll — data ít, vừa hết màn hình), biểu thức phía trong CÓ THỂ ra số DƯƠNG, làm `minScrollX > maxScrollX` — mọi `.clamp(minScrollX, maxScrollX)` trong `k_chart_widget.dart` (2 chỗ `onScaleUpdate`, 1 chỗ khôi phục `chartScale`, 1 chỗ fling animation) ném `ArgumentError` (`min > max`), crash cả widget. Phát hiện + reproduce qua `/code-review`, sửa bằng `min(0.0, ...)` ngay tại nguồn thay vì sửa từng chỗ gọi `.clamp`.
+
+**Mọi nơi trong `k_chart_widget.dart` từng clamp `mScrollX` vào `[0, maxScrollX]` đổi thành `[minScrollX, maxScrollX]`:** 2 nhánh `onScaleUpdate` (§12.3), khôi phục `chartScale` (`_restoreChartScaleFromWidget`, §13.8 — cả 2 pha, xem `architecture.md` §6.13 cho chi tiết cơ chế 2 pha), và điều kiện dừng fling animation (§12.7 — `mScrollX <= 0` → `mScrollX <= minScrollX`).
+
+**Không có snap-back/elastic:** kéo quá vị trí nghỉ, thả tay ra → **giữ nguyên** vị trí đã kéo (kể cả fling văng quá mức cho phép — dừng cứng ngay tại `minScrollX`, không bật lại). Muốn về lại vị trí nghỉ thì user tự kéo ngược. Đây là quyết định thiết kế xác nhận trực tiếp — khác hẳn overscroll kiểu iOS (rubber-band tự bật về).
+
+**An toàn index khi `scrollX` âm** (vùng `translateX` trước đây chưa từng đạt tới): đã audit `indexOfTranslateX` (binary search tự bão hoà trong `[0, mItemCount+mFutureSlots-1]`, không thể trả về ngoài dải) và mọi chỗ dùng `mStartIndex`/`mStopIndex` sau đó (đều có `min`/`max` clamp lại) — không có rủi ro out-of-bounds. Port sang platform khác PHẢI đảm bảo tương đương: index/binary-search tự bão hoà, không throw khi `translateX` vượt xa biên đã biết trước đây.
+
+### 12.11 Giảm khoảng trống nghỉ mặc định — `xFrontPadding` 100 → 40
+
+Theo yêu cầu trực tiếp ("chart có 1 khoảng cách... muốn nhỏ lại gần với axis Y"): `KChartWidget.xFrontPadding` mặc định giảm từ `100` xuống `40` — vị trí nghỉ mặc định lúc mới mở chart (chưa scroll gì) có nến cuối nằm GẦN trục giá hơn nhiều so với trước.
+
+An toàn để giảm mà không cần đổi gì khác, vì 2 lý do:
+1. Badge now-price (§5.9) giờ đặt CHỦ YẾU trên price-axis strip, chỉ lấn `~8px` vào plot — không còn phụ thuộc `xFrontPadding` lớn để tránh đè nến cuối như thiết kế cũ (badge cũ từng nằm gọn trong plot, cần nhiều khoảng trống hơn).
+2. `xOverscrollPadding` (§12.10, mặc định `200`, luôn bật) đã tách riêng "khoảng trống user CÓ THỂ tự kéo ra thêm" khỏi "khoảng trống mặc định lúc nghỉ" — muốn lộ thêm khoảng trống thì user tự kéo, không cần `xFrontPadding` lớn sẵn.
+
+Không đổi công thức `effectiveRightPaddingPx`/`getMinTranslateX` (mục "Padding phải tỷ lệ" ở §11) — chỉ đổi GIÁ TRỊ mặc định truyền vào.
 
 ---
 
@@ -1675,7 +1776,7 @@ SingleChildScrollView(
 
 ### "Crosshair label dính vào cạnh"
 
-- Tăng `xFrontPadding` (mặc định 100px tại chart ≥375px).
+- Tăng `xFrontPadding` (mặc định `40`px tại chart ≥375px — giảm từ `100` theo yêu cầu trực tiếp, xem §12.11).
 
 ### "Chart hẹp vẫn chừa khoảng trống lớn bên phải"
 

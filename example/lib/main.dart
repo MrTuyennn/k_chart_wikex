@@ -837,11 +837,7 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
       livePriceStyle: LivePriceStyle(
         upColor: upColor,
         dnColor: dnColor,
-        textStyle: const TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          color: Colors.black,
-        ),
+        textStyle: const TextStyle(fontSize: 10, color: Colors.white),
       ),
       candleStyle: CandleStyle(
         upColor: upColor,

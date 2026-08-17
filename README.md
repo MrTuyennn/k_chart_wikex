@@ -192,7 +192,8 @@ DataUtil.calculateAll(data, mainIndicators, secondaryIndicators);
 | ------------------ | --------- | -------------------- | ------------------------------------------------------------------------------------- |
 | `mBaseHeight`      | `double`  | `360`                | Main chart height (px)                                                                |
 | `mSecondaryHeight` | `double?` | 20% of `mBaseHeight` | Secondary panel height (px)                                                           |
-| `xFrontPadding`    | `double`  | `100`                | Right padding after last candle (px at ≥375px chart; scales down on narrower screens) |
+| `xFrontPadding`    | `double`  | `40`                 | Right padding after last candle (px at ≥375px chart; scales down on narrower screens) |
+| `xOverscrollPadding` | `double` | `200`               | Extra right-side space the user can drag past the resting position (px at ≥375px chart; `0` disables it) — see [Overscroll](#overscroll-drag-past-the-resting-position) below |
 
 ### Zoom / scroll
 
@@ -204,6 +205,10 @@ DataUtil.calculateAll(data, mainIndicators, secondaryIndicators);
 | `flingRatio` | `double`            | `0.5`               | Fling velocity multiplier       |
 | `flingCurve` | `Curve`             | `Curves.decelerate` | Fling animation curve           |
 | `chartScale` | `KChartScaleState?` | `null`              | Saved scale to restore on mount |
+
+#### Overscroll (drag past the resting position)
+
+Dragging left past where the chart normally rests (right after `xFrontPadding`) reveals up to `xOverscrollPadding` extra px of empty space — the same "pull past the edge to see more room next to the current price" behavior Binance/MEXC charts have. Releasing the drag **keeps the position you dragged to** — there's no elastic snap-back; drag right again to close the gap. Set `xOverscrollPadding: 0` to disable and restore the old hard-stop-at-rest behavior.
 
 ### Data loading & callbacks
 
@@ -285,7 +290,7 @@ if (_lastRender == null || now - _lastRender! > 16) {
 
 ## Bid/Ask badges (order book)
 
-Pass `bidPrice`/`askPrice` (best bid, best ask) to draw 1 combined box near the now-price line: a left column stacking Ask (red) above Bid (green), and a right cell — 1 row tall, vertically centered, not stretched to match the left column's full height — showing the live price. Same colors as the now-price badge (`KChartColors.livePriceStyle.upColor`/`dnColor`), and it **replaces** the standalone now-price badge (the dashed now-price line itself is unaffected, still always drawn):
+Pass `bidPrice`/`askPrice` (best bid, best ask) to draw a small box stacking Ask (red, top) above Bid (green, bottom), positioned right next to the now-price badge on its left side — **in addition to** it, not replacing it. The now-price badge (flag + number, and the dashed line) keeps drawing exactly as it always did, at exactly the same position, independent of `bidPrice`/`askPrice`. Both share the same Y each frame, so the box moves together with the now-price line as it updates. Same colors as the now-price badge (`KChartColors.livePriceStyle.upColor`/`dnColor`):
 
 ```dart
 KChartWidget(
@@ -298,8 +303,9 @@ KChartWidget(
 )
 ```
 
-- Both must be non-null to draw the box — there's no fallback like `livePrice`'s `?? datas.last.close`. When either is `null`, the chart falls back to the plain now-price badge (flag + number, docked per `verticalTextAlignment`) as if `bidPrice`/`askPrice` were never set.
-- Positioned per `verticalTextAlignment` (default `right` — docked at the price axis edge, same side the now-price badge used to occupy), vertically centered on the now-price line's Y — so it visually reads as "this box IS the current price, broken down into bid/ask."
+- Both must be non-null to draw the Ask/Bid box — there's no fallback like `livePrice`'s `?? datas.last.close`. When either is `null`, only the Ask/Bid box is skipped; the now-price badge is unaffected either way.
+- Positioned per `verticalTextAlignment` (default `right` — docked at the price axis edge, same side the now-price badge occupies) directly to the left of the now-price badge, sharing its vertical center, with a small gap so the two never overlap. The box is **always** perfectly centered on the badge, in every case — including when the price sits right at the top/bottom edge of the visible range, where it may extend slightly past the main chart area (into the top padding or the volume panel below) rather than ever losing that alignment.
+- Its width grows toward the plot's candle area as the price/label text gets longer (it's on the side facing the candles, unlike the badge itself). If it ends up covering the last candle on a narrow chart or with long labels, either shorten `bidLabel`/`askLabel` or increase `xFrontPadding`.
 
 **Performance note:** every non-`null` change to `bidPrice`/`askPrice` triggers `ChartPainter.shouldRepaint` → a full repaint. Order books typically update at high frequency over WebSocket, so if the box isn't currently shown to the user, pass `null` for both instead of computing real values and hiding the box in your own UI — a `null` → `null` change is a no-op for `shouldRepaint`, so ticks arriving while the box is toggled off cost nothing. The bundled `example` app follows this pattern with a `showBidAsk` toggle (`ChartBloc`/`ChartState`) gating what's passed to `bidPrice`/`askPrice`, not just what's drawn.
 
@@ -483,6 +489,12 @@ const KChartColors(
 ```
 
 Badge vẽ qua `LivePriceBadgePainter` (convert từ `assets/Number.svg`) — nền bo góc + mũi tên nhỏ trỏ vào chart, tự co giãn theo độ dài số giá.
+
+Với `verticalTextAlignment: right` (mặc định), badge đặt CHỦ YẾU nằm trên strip trục giá bên phải (`priceAxisRect`) — chỉ mũi tên lấn nhẹ vào vùng nến (~5px) để "chạm" đúng đường kẻ giá hiện tại, còn lại toàn bộ thân badge nằm trên strip trục giá, giống cách nhiều sàn (Binance/MEXC) hiển thị giá hiện tại đè lên trục Y. `verticalTextAlignment: left` không đổi (không có strip trục giá bên trái).
+
+Padding quanh chữ trong badge (6px ngang, 4px dọc) — nền đỏ/xanh bo góc, dễ đọc, khớp phong cách MEXC. Strip trục giá bên phải (bề rộng tự đo theo label giá dài nhất, xem `chart_jk_arch.md` §5.9/§7.6) cũng được nới rộng hơn một chút để chứa vừa badge thoải mái, không bị cắt.
+
+Số hiển thị trong badge giữ nguyên số thập phân đầy đủ theo `fixedLength`, giống mọi nhãn giá khác — không làm tròn.
 
 ### Volume bar opacity
 

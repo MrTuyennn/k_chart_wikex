@@ -596,7 +596,7 @@ A hardcoded width fails at both extremes: `109,432.50` needs about 64 px,
 widest label in the current tick set:
 
 ```
-priceAxisWidth = clamp(maxLabelWidth + 14, 48, 96)
+priceAxisWidth = clamp(maxLabelWidth + 20, 56, 104)
 rounded up to a multiple of 8
 ```
 

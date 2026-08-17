@@ -149,7 +149,7 @@ effectiveRightPaddingPx(xFrontPadding, chartWidth):    // chartWidth = mPlotWidt
     return xFrontPadding * min(ratio, 1.0)
 ```
 
-Ví dụ với `xFrontPadding = 100`: chartWidth (mPlotWidth) ≥ 375px → giữ nguyên 100px; 250px → ~67px; 187px → ~50px.
+Ví dụ với `xFrontPadding = 40` (default hiện tại của `KChartWidget`, xem §6.17): chartWidth (mPlotWidth) ≥ 375px → giữ nguyên 40px; 250px → ~27px; 187px → ~20px.
 
 **Biên scroll tối đa** (bao nhiêu data-space còn lại phía trái sau khi trừ padding phải):
 
@@ -162,6 +162,21 @@ getMinTranslateX():
 maxScrollX = abs(getMinTranslateX())   // giá trị này PHẢI lộ ra global/shared state — dùng để quyết định
                                           // có nên bắn onLoadMore hay không (xem §6)
 ```
+
+**Biên scroll tối thiểu (overscroll bên phải, tuỳ chọn)** — mặc định `scrollX` chặn ở `0` (vị trí nghỉ). `xOverscrollPadding` (px, cùng cách co giãn `effectiveRightPaddingPx` như `xFrontPadding` ở trên) cho phép `scrollX` đi ÂM, kéo quá vị trí nghỉ để lộ thêm khoảng trống bên phải (xem §6.14):
+
+```
+minScrollX = min(0, -(effectiveRightPaddingPx(xOverscrollPadding, chartWidth) / scaleX))
+                                          // min(0, ...) BẮT BUỘC — không suy ra "xOverscrollPadding không âm nên
+                                          // biểu thức trong luôn <= 0" mà bỏ qua: nếu implementation khác của
+                                          // port không validate input, xOverscrollPadding âm sẽ làm biểu thức
+                                          // trong ra DƯƠNG, minScrollX > maxScrollX (khi maxScrollX == 0, chart
+                                          // không có gì để scroll) → mọi thao tác clamp(scrollX, minScrollX,
+                                          // maxScrollX) sau đó UB/throw tuỳ ngôn ngữ. Chốt tại nguồn, không dựa
+                                          // vào "input hợp lệ".
+```
+
+Mọi công thức `clamp(scrollX, 0, maxScrollX)` trong tài liệu này (§6.4, §6.9, §6.13) đọc là `clamp(scrollX, minScrollX, maxScrollX)` — `minScrollX = 0` khi không dùng overscroll, không đổi hành vi.
 
 **Vùng hiển thị** (chỉ số nến đầu/cuối đang thấy trên màn hình):
 
@@ -306,7 +321,7 @@ canvas.save()                                    // ── mở scope A: scaleX 
   → drawTrendLines()                              // chỉ còn trong A (scaleX) — KHÔNG có scaleY ⚠️
 canvas.restore()                                  // ── đóng scope A ──
 
-→ drawVerticalText() / drawDate() / drawText() / drawMaxAndMin() / drawNowPrice() / drawCrossLineText()
+→ drawVerticalText() / drawDate() / drawText() / drawMaxAndMin() / drawNowPrice() / drawBidAsk() / drawCrossLineText()
   // TẤT CẢ chạy SAU khi scope A đã đóng → hoàn toàn screen space, KHÔNG canvas transform nào cả
   // (những cái cần đúng theo zoom phải tự tính tay — xem cột "Cơ chế" trong bảng dưới)
 ```
@@ -329,7 +344,8 @@ Bảng đầy đủ theo từng vùng/phần tử vẽ:
 | Label trục X (ngày/giờ, `drawDate`) | (b) vị trí cột tính tay qua `xToTranslateX`/`indexOfTranslateX` (đúng theo `scaleX`); clip cứng vào `[0, plotWidth] × dateRect` | ❌ | (b) |
 | Label indicator góc trên (`drawText`) | ❌ | ❌ | (c) vị trí cố định mỗi frame, không phụ thuộc zoom nào |
 | Label max/min giá (`drawMaxAndMin`) | (b) qua `translateXtoX`, so với `plotWidth/2` để quyết định trái/phải — **đúng theo zoom** | (b) qua `_applyScaleY` — **đúng theo zoom** | (b) |
-| Now-price (đường kẻ + badge giá hiện tại, `drawNowPrice`) | (b) — `offsetX` (khi `VerticalTextAlignment.right`, mặc định) tính từ `plotWidth` (KHÔNG PHẢI `width`) — badge dừng đúng mép strip giá, không tràn vào | (b) qua `_applyScaleY` — **đúng theo zoom** | (b) |
+| Now-price (đường kẻ + badge giá hiện tại, `drawNowPrice`) | (b) — `offsetX` (khi `VerticalTextAlignment.right`, mặc định) tính từ `plotWidth` (KHÔNG PHẢI `width`) — badge đẩy ra ngoài, nằm CHỦ YẾU trên price-axis strip, chỉ lấn nhẹ `badgeSpace` px vào plot (xem §6.16) | (b) qua `_applyScaleY` — **đúng theo zoom** | (b) |
+| Box Ask/Bid (`drawBidAsk`, chỉ khi `bidPrice`+`askPrice` cùng non-null) | (b) — vị trí X tính từ mép badge now-price (§6.14), mirror theo `verticalTextAlignment` | (b) qua `_applyScaleY`, CÙNG `centerY` với now-price — **đúng theo zoom**, KHÔNG kẹp `[minY, maxY]` (khác mọi label khác trong bảng này, xem cảnh báo MUST MATCH ở §6.14) | (b) |
 
 > **⚠️ MUST MATCH — Crosshair và Trend-line KHÔNG theo `scaleY`/`offsetY`, dù bản thân nến/main-indicator CÓ bị zoom dọc.** Đây là hệ quả trực tiếp của việc `drawCrossLine`/`drawCrossLineText`/`drawTrendLines` gọi `getMainY(...)`/`getY(...)` — hàm map Y **cơ bản** (`(maxValue - v) * scaleY_nộibộ + rectTop`, không liên quan gì tới tham số zoom `scaleY`/`offsetY` của widget) — mà KHÔNG bọc qua `_applyScaleY` như `drawNowPrice`/`drawMaxAndMin` đã làm đúng. Hệ quả quan sát được: nếu user pinch/kéo để zoom dọc main chart (`scaleY != 1` hoặc `offsetY != 0`) rồi long-press để bật crosshair, đường kẻ ngang + chấm + badge giá của crosshair sẽ **lệch khỏi vị trí thực của nến trên màn hình** (hiển thị như thể `scaleY=1, offsetY=0`), trong khi bản thân nến/MA/BOLL/SAR... vẫn hiển thị đúng vị trí đã zoom. Tương tự cho các đoạn trend-line lịch sử (dùng lại `trendLineMax/trendLineScale/trendLineContentRec` — 3 biến toàn cục được `MainRenderer.getY()` "chụp" lại mỗi lần gọi, cũng là giá trị **chưa** áp zoom).
 >
@@ -447,7 +463,7 @@ cornerRect    = rect(plotWidth, dateTop, width, dateTop + 16)    // ô chết g�
 **Bề rộng strip trục giá** (`priceAxisWidth`) — tự đo theo label rộng nhất đang hiển thị, clamp + làm tròn bội 8 + **hysteresis**:
 
 ```
-raw      = clamp(maxLabelWidth + 14, 48, 96)
+raw      = clamp(maxLabelWidth + 20, 56, 104)
 required = ceil(raw / 8) * 8
 if required > priceAxisWidth OR required <= priceAxisWidth - 8:
     priceAxisWidth = required
@@ -578,7 +594,7 @@ livePrice, isTrendLineMode, selectY, trendLines(so theo giá trị từng điể
 
 ```
 scaleX: number        // zoom ngang, clamp [minScale, maxScale] (props, mặc định 0.2–2.2)
-scrollX: number        // px trong "data space" tính từ mép phải, clamp [0, maxScrollX]
+scrollX: number        // px trong "data space" tính từ mép phải, clamp [minScrollX, maxScrollX] (§3.1 — minScrollX = 0 nếu không dùng overscroll §6.15)
 scaleY: number        // zoom dọc main, clamp [0.3, 5.0]
 offsetY: number        // pan dọc main, clamp theo §3.2
 selectX, selectY: number   // vị trí crosshair
@@ -616,11 +632,11 @@ gestureInMain    = (điểm chạm nằm trong mainRect)     // top = mainRect.t
 
 | # | Điều kiện | Hành vi |
 |---|---|---|
-| 0 | `!gestureInMain` VÀ số ngón < 2 | `scrollX += dx/scaleX`, clamp `[0, maxScrollX]`. `dy` KHÔNG pan chart — forward nguyên `dy` qua callback `onVerticalOverscroll` (§6.6) để parent tự quyết cuộn ngoài. Vẫn kiểm tra trigger `onLoadMore` (xem bảng §6.7). |
+| 0 | `!gestureInMain` VÀ số ngón < 2 | `scrollX += dx/scaleX`, clamp `[minScrollX, maxScrollX]` (§3.1/§6.15 — `minScrollX = 0` nếu không dùng overscroll). `dy` KHÔNG pan chart — forward nguyên `dy` qua callback `onVerticalOverscroll` (§6.6) để parent tự quyết cuộn ngoài. Vẫn kiểm tra trigger `onLoadMore` (xem bảng §6.7). |
 | 1 | `dragStartedInTapMode` VÀ số ngón==1 VÀ không phải scaleY-gesture | Di chuyển crosshair: `selectX = điểm chạm hiện tại.x` (không scroll, không zoom). |
 | 2 | `isScaleYGesture` VÀ số ngón==1 | `scaleY -= (dy hiện tại - dy lúc trước) * 0.005`, clamp `[0.3, 5.0]`. Re-clamp `offsetY` ngay sau (bound phụ thuộc `scaleY`). |
 | 3 | `pinchScale != 1.0` (≥2 ngón) | `scaleX = scaleXLúcGestureStart * pinchScale`, clamp `[minScale, maxScale]`. |
-| 4 | (mặc định — 1 ngón kéo tự do) | `scrollX += dx/scaleX`, clamp `[0, maxScrollX]`. NẾU `scaleY != 1.0`: `offsetY = clamp(offsetY + dy)`; phần dôi ra ngoài clamp forward qua `onVerticalOverscroll` (§6.6). Kiểm tra trigger `onLoadMore`. **Chi tiết đầy đủ nhánh này — xem §6.5.** |
+| 4 | (mặc định — 1 ngón kéo tự do) | `scrollX += dx/scaleX`, clamp `[minScrollX, maxScrollX]` (§3.1/§6.15). NẾU `scaleY != 1.0`: `offsetY = clamp(offsetY + dy)`; phần dôi ra ngoài clamp forward qua `onVerticalOverscroll` (§6.6). Kiểm tra trigger `onLoadMore`. **Chi tiết đầy đủ nhánh này — xem §6.5.** |
 
 `dragStartedInTapMode` = giá trị của `isOnTap` **tại thời điểm** `onScaleStart` (chốt lúc bắt đầu, không đổi giữa chừng).
 
@@ -736,7 +752,7 @@ gesture rơi vào nhánh 4 (§6.4) khi và chỉ khi TẤT CẢ đúng:
 
 ```
 // (1) Trục X — LUÔN LUÔN cập nhật, không phụ thuộc scaleY
-scrollX = clamp(scrollX + dx/scaleX, 0, maxScrollX)
+scrollX = clamp(scrollX + dx/scaleX, minScrollX, maxScrollX)   // minScrollX xem §3.1/§6.15
 
 // (2) Trục Y — CHỈ cập nhật NẾU scaleY != 1.0 tại thời điểm đó
 if scaleY != 1.0:
@@ -794,7 +810,7 @@ Tham số `bool` truyền vào `onLoadMore`: `true` = nên cuộn tới mép TR�
 ```
 targetScrollX = scrollX + velocityX * flingRatio   // flingRatio mặc định 0.5
 animate scrollX: begin=scrollX hiện tại → end=targetScrollX, duration=flingTime(mặc định 600ms), easing=flingCurve(mặc định "decelerate")
-mỗi frame animation: clamp scrollX vào [0, maxScrollX]; nếu chạm biên → dừng animation ngay + trigger tương ứng (§6.8.b khi chạm phải, không trigger gì khi chạm trái=0)
+mỗi frame animation: clamp scrollX vào [minScrollX, maxScrollX] (§3.1/§6.15 — minScrollX = 0 nếu không dùng overscroll); nếu chạm biên → dừng animation ngay + trigger tương ứng (§6.8.b khi chạm phải, không trigger gì khi chạm trái=minScrollX — KHÔNG snap-back, xem §6.15)
 ```
 
 ### 6.10 Double-tap (vùng bên phải — implement bằng 1 `GestureDetector` RIÊNG, tách khỏi gesture chính)
@@ -873,7 +889,8 @@ PHA 1 (đồng bộ, ngay lập tức):
     suppressScaleCallback = true                           // ⚠️ chặn callback trong lúc restore — xem bên dưới
     scaleX  = saved.scaleX
     scaleY  = clamp(saved.scaleY, 0.3, 5.0)
-    scrollX = clamp(saved.scrollX, 0, maxScrollX_HIỆN_TẠI) // ⚠️ maxScrollX lúc này CÓ THỂ CHƯA ĐÚNG
+    scrollX = clamp(saved.scrollX, minScrollX, maxScrollX_HIỆN_TẠI) // minScrollX xem §3.1 — 0 nếu không dùng
+                                                             // overscroll. ⚠️ maxScrollX lúc này CÓ THỂ CHƯA ĐÚNG
                                                              //    (chưa layout xong / data mới chưa paint lần nào
                                                              //     → maxScrollX có thể vẫn = 0 hoặc giá trị CŨ từ chart khác)
                                                              //    → nếu maxScrollX_HIỆN_TẠI <= 0, dùng 0 làm biên trên tạm thời
@@ -886,13 +903,93 @@ PHA 1 (đồng bộ, ngay lập tức):
 PHA 2 (bất đồng bộ, SAU 1 frame layout — CHỈ chạy khi restore xảy ra lúc mount/data đổi, không chạy mọi lần):
     đợi tới sau khi layout + ít nhất 1 lần paint đã chạy xong (lúc này maxScrollX mới phản ánh ĐÚNG data/kích thước hiện tại)
     nếu chartScale prop vẫn CÒN Y HỆT lúc bắt đầu đợi (chưa bị đổi tiếp trong lúc chờ):
-        reClampedScrollX = clamp(saved.scrollX, 0, maxScrollX_ĐÚNG)
+        reClampedScrollX = clamp(saved.scrollX, minScrollX, maxScrollX_ĐÚNG)
         nếu reClampedScrollX != scrollX hiện tại: cập nhật scrollX = reClampedScrollX, yêu cầu vẽ lại
 ```
 
 **Vì sao cần 2 pha**: `maxScrollX` (biên scroll tối đa) phụ thuộc `dataLen` VÀ `chartWidth` (§3.1) — cả 2 đều chỉ biết CHÍNH XÁC sau khi layout xong ít nhất 1 lần (đo được kích thước thật + chạy `calculateValue()` trên data thật). Tại thời điểm `initState`/lúc `chartScale` vừa đổi, `maxScrollX` có thể vẫn mang giá trị CŨ (từ frame trước, hoặc `0` nếu chart vừa mount lần đầu) — clamp `scrollX` ngay lúc đó CÓ THỂ SAI (bó hẹp `scrollX` về `0` một cách giả tạo dù giá trị muốn khôi phục lớn hơn). Pha 2 sửa lại đúng giá trị sau khi layout đã ổn định. Hệ quả quan sát được nếu port bỏ qua pha 2: **có thể thấy 1 frame chớp nháy** — chart hiện đúng vị trí scroll cũ (từ pha 1, bị bó về gần 0) rồi "giật" sang đúng vị trí đã lưu ngay frame sau (pha 2). Đây là **artifact chấp nhận được** của cách Flutter defer việc đọc layout info; điều BẮT BUỘC phải giữ đúng khi port không phải là chớp nháy 1 frame đó, mà là **nguyên tắc**: không được clamp/khôi phục `scrollX` cuối cùng cho tới khi biết chắc `maxScrollX` đã đúng (tức sau khi có kích thước viewport thật + data thật) — nếu port có cách đọc layout đồng bộ hơn Flutter (biết ngay `maxScrollX` đúng mà không cần đợi 1 frame), có thể gộp 2 pha thành 1 mà vẫn đúng kết quả cuối, KHÔNG bắt buộc phải giả lập đúng độ trễ 1-frame của Flutter.
 
 **Vì sao cần cờ `suppressScaleCallback`**: nếu không có cờ này, việc PHA 1 gán `scaleX`/`scaleY`/`scrollX` từ prop `chartScale` sẽ (nếu code không cẩn thận) có thể vô tình kích hoạt lại callback `onChartScaleChanged` — tạo vòng lặp phản hồi: `chartScale` (prop) → container tự gán state → phát `onChartScaleChanged` → parent nhận callback → parent cập nhật lại `chartScale` (state của chính parent) → truyền lại `chartScale` prop mới → container lại "thấy đổi" → khôi phục lại → phát callback... Cờ `suppressScaleCallback` đảm bảo: **khôi phục từ prop (đường prop → state) KHÔNG BAO GIỜ tự động phát lại thành callback (đường state → prop)** — 2 chiều này phải tách biệt hoàn toàn. Khi port sang kiến trúc khác (Redux/MobX/StateFlow/Combine...), đây chính là nguyên tắc **"one-way data flow, không echo ngược"**: field/state được set TỪ prop bên ngoài không được kích hoạt lại đúng callback đại diện cho "user vừa tự gesture đổi state" — 2 nguồn cập nhật (từ ngoài vào vs từ gesture ra) phải có cờ/flag phân biệt rõ, nếu không sẽ có nguy cơ vòng lặp vô hạn hoặc chớp giật giữa 2 lần cập nhật cạnh tranh nhau.
+
+### 6.14 `bidPrice`/`askPrice` — box Ask/Bid cạnh badge now-price
+
+Khi CẢ HAI `bidPrice` VÀ `askPrice` cùng non-null, vẽ thêm 1 box nhỏ 2 ô xếp chồng — Ask (màu `dnColor`) trên, Bid (màu `upColor`) dưới — NGAY SAU khi vẽ xong đường + badge now-price (§6.12), trong cùng 1 lần vẽ frame. Thiếu 1 trong 2 (`null`) → không vẽ box này; đường/badge now-price không bị ảnh hưởng gì (luôn vẽ độc lập, không phụ thuộc `bidPrice`/`askPrice`).
+
+**Vị trí ngang — "về phía tâm plot" so với badge now-price, KHÔNG cố định 1 phía:**
+
+```
+// Mép trái/phải badge now-price — dùng ĐÚNG công thức tính offsetX của badge now-price (§3.4 dòng "Now-price", §6.16):
+badgePaddingX = 6, badgeSpace = 8   // hằng số CỐ ĐỊNH, không co giãn theo scaleX/chartWidth (badgePaddingY = 4 cho chiều dọc, xem §6.16)
+flagBadgeWidth = measureTextWidth(formatFixed(nowPriceValue, fixedLength)) + badgePaddingX * 2
+flagLeft  = verticalTextAlignment == right
+    ? plotWidth - badgeSpace       // badge đẩy ra ngoài, lấn `badgeSpace` px vào plot — KHÔNG trừ flagBadgeWidth (§6.16)
+    : badgeSpace                    // badge sát mép trái plot (không có price-axis strip bên trái, không đổi)
+flagRight = flagLeft + flagBadgeWidth
+
+// Box luôn nằm về phía TÂM PLOT so với badge — mirror theo alignment, KHÔNG dùng 1 công thức chung cho cả 2 nhánh:
+boxGap = 4   // hằng số cố định
+left = verticalTextAlignment == right
+    ? flagLeft - boxGap - boxWidth   // right: badge sát phải  -> box qua TRÁI badge (vào giữa plot)
+    : flagRight + boxGap             // left:  badge sát trái  -> box qua PHẢI badge (vào giữa plot)
+```
+
+> **⚠️ MUST MATCH — không được rút gọn "box luôn bên trái badge" bất kể alignment.** Với `right` (mặc định), đặt box bên trái badge đúng — badge sát mép phải, box lùi vào trong. Nhưng với `left`, badge đã sát mép TRÁI plot (`flagLeft = badgeSpace = 5`) — nếu vẫn đặt box "bên trái badge" sẽ cho `left` ÂM, ngoài vùng clip `[0, plotWidth]` (§3.1) — box vẽ hoàn toàn ngoài canvas, vô hình. Bug thật đã gặp (phát hiện qua code review, không phải lý thuyết) — port PHẢI giữ đúng nhánh mirror theo `verticalTextAlignment` ở trên, test riêng cả 2 giá trị `left`/`right` khi có `bidPrice`/`askPrice`.
+
+**Vị trí dọc — LUÔN center theo Y của badge now-price, không có trường hợp ngoại lệ:**
+
+```
+centerY = applyScaleY(getMainY(nowPriceValue)).clamp(minY, maxY)   // CÙNG value/công thức now-price dùng (§6.12),
+                                                                     // minY/maxY = applyScaleY(getMainY(mainHigh/LowValue))
+boxTop = centerY - boxHeight / 2    // box 2 hàng, badge 1 hàng -> box vươn đều 2 phía trên/dưới quanh Y badge
+```
+
+> **⚠️ MUST MATCH — KHÔNG kẹp `boxTop` vào `[minY, maxY]` như các label khác (max/min, crosshair) thường làm.** Đây là đánh đổi CỐ Ý: khi giá sát đỉnh/đáy dải hiển thị, box được PHÉP tràn ra ngoài main-chart rect (vào phần padding trên/panel volume dưới) — ưu tiên "luôn center chính xác theo badge" hơn "luôn nằm gọn trong main rect". Port kẹp lại `boxTop` theo `[minY, maxY]` (giống cách nhiều label khác làm) sẽ làm box lệch tâm khỏi badge đúng lúc giá ở biên — sai với hành vi gốc dù trông "hợp lý" hơn.
+
+### 6.15 Overscroll bên phải khi kéo — `xOverscrollPadding` (không snap-back)
+
+Mở rộng §6.4 nhánh 4 (kéo tự do) và §6.9 (fling): khi `xOverscrollPadding > 0` (mặc định của widget, `0` = tắt hẳn — xem §3.1 cho công thức `minScrollX`), biên dưới của `scrollX` không còn cố định `0` mà là `minScrollX` (có thể âm).
+
+```
+// §6.4 nhánh 4 VÀ mọi nơi khác từng viết clamp(scrollX, 0, maxScrollX) trong tài liệu này:
+scrollX = clamp(scrollX + dx/scaleX, minScrollX, maxScrollX)
+
+// §6.9 Fling — điều kiện dừng animation khi chạm biên dưới:
+nếu scrollX <= minScrollX: scrollX = minScrollX, dừng animation ngay (không trigger onLoadMore — đó là biên TRÊN)
+```
+
+**Không có elastic/rubber-band snap-back.** Thả tay (hoặc fling văng quá `minScrollX`) → `scrollX` GIỮ NGUYÊN đúng giá trị đã chạm biên, không tự động bật lại về `0`. Muốn quay về vị trí nghỉ, user phải tự kéo ngược lại (tăng `scrollX` lên gần `0`). Khác hẳn overscroll kiểu iOS (kéo quá rồi tự bung về) — port SAI nếu tự ý thêm hiệu ứng bung về mà platform gốc (Flutter) không có.
+
+**Không có rủi ro out-of-bounds ở vùng `translateX` mới (âm hơn trước đây từng đạt tới):** `indexOfTranslateX` (binary search, §3.1) tự bão hoà trong `[0, itemCount + futureSlots - 1]` theo THIẾT KẾ (không thể trả về ngoài dải truyền vào) — port dùng binary search tương đương PHẢI giữ đúng tính chất bão hoà này (không throw/UB khi `translateX` truyền vào nằm ngoài dải giá trị `getX(i)` đã biết).
+
+### 6.16 Vị trí badge now-price — đẩy ra ngoài, nằm trên price-axis strip
+
+Trước đây badge now-price (`VerticalTextAlignment.right`, mặc định) luôn nằm GỌN trong `plotWidth` (mép phải cách `plotWidth` đúng `badgeSpace` px). Giờ đẩy ra ngoài, nằm CHỦ YẾU trên price-axis strip:
+
+```
+// TRƯỚC: offsetX = plotWidth - flagBadgeWidth - badgeSpace   (badge nằm gọn trong plotWidth)
+// SAU:
+offsetX = plotWidth - badgeSpace
+```
+
+Chỉ trừ `badgeSpace` (=5), KHÔNG trừ thêm `flagBadgeWidth` — mép TRÁI badge (nơi mũi tên chỉ vào chart) lấn nhẹ `badgeSpace` px vào vùng plot để "chạm" đúng đường now-price dashed; toàn bộ THÂN badge (số giá) nằm trên price-axis strip (`[plotWidth, width]`). `VerticalTextAlignment.left` không đổi (`offsetX = badgeSpace`) — không có price-axis strip bên trái để đẩy ra.
+
+**Padding quanh chữ (trong) VÀ khoảng lấn vào plot (ngoài) đã điều chỉnh** qua các yêu cầu trực tiếp tiếp theo:
+- `badgePaddingX`/`badgePaddingY` (padding TRONG, quanh chữ) chốt ở **6** / **4** (từng thử tăng lên 8/5 theo mẫu hình MEXC rồi giảm lại).
+- `badgeSpace` (padding NGOÀI — khoảng lấn vào plot khi đóng `right`, khoảng cách mép khi đóng `left`) chốt ở **5** (từng thử tăng lên 8 rồi revert lại — yêu cầu trực tiếp "nằm ra ngoài cùng và cách 5px thui").
+- Cả 3 hằng số dùng chung giữa công thức badge (`drawNowPrice`) và `flagBadgeWidth`/`flagLeft` của box Ask/Bid (§6.14) — port đổi 1 nơi, tự động khớp cả 2.
+- `priceAxisWidth` (§4) cũng nới rộng tương ứng — xem công thức `clamp(maxLabelWidth + 20, 56, 104)` ở trên (trước: `+14, 48, 96`).
+
+> **⚠️ MUST MATCH — công thức này và `flagLeft` của box Ask/Bid (§6.14) PHẢI khớp nhau tuyệt đối.** Box Ask/Bid dùng lại chính `flagLeft` để tự "bám" cạnh badge — port sửa công thức `offsetX` ở đây mà quên đồng bộ `flagLeft` ở §6.14 (hoặc ngược lại) sẽ làm box và badge KHÔNG còn khớp cạnh nhau (hở khoảng trống sai hoặc chồng lấn), dù mỗi công thức riêng lẻ trông vẫn "đúng".
+
+**Text hiển thị badge now-price giữ nguyên số thập phân đầy đủ** (`fixedLength`, giống mọi nhãn giá khác) — có thử LÀM TRÒN về số nguyên gần nhất theo yêu cầu trực tiếp ở 1 thời điểm (§6.14 dùng chung công thức đo bề rộng nếu có làm tròn), sau đó bị **revert lại** ("revert cái format giá của liveprice không cần phải làm tròn").
+
+### 6.17 Giảm khoảng trống nghỉ mặc định — `xFrontPadding` 100 → 40
+
+Theo yêu cầu trực tiếp ("chart có 1 khoảng cách... muốn nhỏ lại gần với axis Y"): giá trị DEFAULT của `xFrontPadding` (không phải công thức `effectiveRightPaddingPx` — công thức không đổi, xem §3.1) giảm từ `100` xuống `40`. Vị trí nghỉ mặc định lúc mới mở chart (chưa scroll) có nến cuối nằm gần trục giá hơn nhiều so với trước.
+
+An toàn để giảm mà không cần đổi gì khác:
+1. Badge now-price (§6.16) giờ đặt chủ yếu trên price-axis strip, chỉ lấn ~8px vào plot — không còn cần `xFrontPadding` lớn để tránh đè nến cuối như thiết kế cũ.
+2. `xOverscrollPadding` (§6.15, mặc định `200`, luôn bật) đã tách riêng "khoảng trống user CÓ THỂ tự kéo ra thêm" khỏi "khoảng trống mặc định lúc nghỉ" — cần thêm khoảng trống thì user tự kéo, không cần đặt `xFrontPadding` lớn sẵn.
 
 ---
 
@@ -909,8 +1006,11 @@ PHA 2 (bất đồng bộ, SAU 1 frame layout — CHỈ chạy khi restore xảy
 | `hideGrid` | boolean | Ẩn toàn bộ đường lưới (grid ngang/dọc mọi panel) — reference-lines (vd 20/80 StochRSI) KHÔNG bị ẩn theo cờ này. |
 | `showNowPrice` | boolean | Bật/tắt đường + badge giá hiện tại. |
 | `livePrice` | number? | Giá tick real-time — xem §6.12. |
+| `bidPrice`, `askPrice` | number? | Best bid/best ask từ order book — vẽ thêm box Ask/Bid cạnh badge now-price khi CẢ HAI non-null, xem §6.14. |
+| `bidLabel`, `askLabel` | string | Text prefix trong box Ask/Bid, mặc định `'Bid'`/`'Ask'` — đổi cho i18n. |
 | `fixedLength` | int | Số chữ số thập phân hiển thị (định dạng số, §8). |
 | `xFrontPadding` | number | Padding phải tối đa (px tại `referenceChartWidth=375`) — xem §3.1. |
+| `xOverscrollPadding` | number | Overscroll TỐI ĐA (px, cùng cách co giãn `xFrontPadding`) — kéo quá vị trí nghỉ để lộ thêm khoảng trống bên phải, không snap-back. `0` = tắt. Xem §3.1, §6.15. |
 | `minScale`, `maxScale` | number | Biên `scaleX`, mặc định `0.2`/`2.2`. |
 | `flingTime`, `flingRatio`, `flingCurve` | — | Tham số animation quán tính, §6.9 (chỉ áp dụng cho trục X — xem §6.6 mục 5). |
 | `chartScale` | ScaleState? | `{scaleX, scaleY, scrollX}` để khôi phục zoom khi đổi timeframe. |
@@ -1345,3 +1445,6 @@ Danh sách nên viết test đối chiếu số/giá trị (golden test) giữa 
 - [ ] Test khôi phục `chartScale` (§6.13): truyền cùng giá trị `{scaleX,scaleY,scrollX}` nhưng KHÁC instance ở mỗi lần re-render cha — xác nhận state nội bộ KHÔNG bị snap-back liên tục (so sánh phải theo VALUE, không theo reference). Test riêng trường hợp restore lúc data/kích thước chưa layout xong — `scrollX` cuối cùng phải khớp giá trị đã lưu sau khi layout ổn định, không bị kẹt ở giá trị clamp tạm thời ban đầu.
 - [ ] Test restore từ `chartScale` KHÔNG tự phát lại `onChartScaleChanged` (§6.13) — nếu port thiếu cờ suppress tương đương, dễ tạo vòng lặp phản hồi vô hạn giữa parent/container khi cả 2 phía đều tự động đồng bộ state qua nhau.
 - [ ] Test điểm neo khi pinch (§6.5): pinch-zoom trong lúc đã cuộn sang trái (xem nến cũ, không phải nến mới nhất) — xác nhận điểm neo LUÔN là mép phải chart (`chartWidth - effectiveRightPaddingPx`), KHÔNG phải điểm giữa 2 ngón tay. Nến dưới ngón tay phải "trôi" trong lúc zoom, không đứng yên.
+- [ ] Test overscroll (§3.1/§6.15): với `xOverscrollPadding > 0`, kéo `scrollX` xuống dưới `0` tới `minScrollX` — xác nhận KHÔNG dead-zone (đảo hướng giữa chừng phải phản hồi ngay, cùng nguyên tắc §6.5-B) VÀ KHÔNG snap-back khi thả tay (khác `scaleY`/pinch — `scrollX` phải GIỮ NGUYÊN đúng giá trị lúc thả, không tự bung về `0`). Test riêng `xOverscrollPadding` truyền ÂM (input sai) + `maxScrollX <= 0` (data ít) — `minScrollX` phải vẫn `<= 0` (không throw/UB do `minScrollX > maxScrollX`), xem cảnh báo `min(0, ...)` ở §3.1.
+- [ ] Test box Ask/Bid (§6.14) với CẢ 2 giá trị `verticalTextAlignment` (`left` VÀ `right`) khi `bidPrice`/`askPrice` cùng non-null — xác nhận box luôn nằm TRONG vùng vẽ (`x ∈ [0, plotWidth]`), không âm/không tràn ra ngoài do đặt cố định 1 phía bất kể alignment (bug thật đã gặp — xem cảnh báo MUST MATCH ở §6.14). Test riêng giá pinned sát đỉnh/đáy dải hiển thị — box phải LUÔN center chính xác theo Y của badge now-price (không lệch tâm dù có tràn nhẹ ra ngoài main-chart rect).
+- [ ] Test vị trí badge now-price (§6.16, `verticalTextAlignment.right`) — xác nhận mép TRÁI badge chỉ lấn `badgeSpace` px vào `plotWidth` (KHÔNG bằng công thức cũ "nằm gọn trong plotWidth"), và mép PHẢI vượt qua `plotWidth` (nằm trên price-axis strip). Test đồng thời box Ask/Bid (§6.14) vẫn bám đúng cạnh badge sau khi đổi vị trí — 2 công thức lệch nhau là lớp lỗi dễ tái phát nhất khi port sửa 1 trong 2 mà quên bên còn lại.

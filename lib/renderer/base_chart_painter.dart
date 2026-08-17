@@ -26,6 +26,12 @@ class PriceAxisWidthCache {
 abstract class BaseChartPainter extends CustomPainter {
   static double maxScrollX = 0.0;
 
+  /// Cận DƯỚI của `scrollX` — thường `0.0` (không overscroll). Âm khi
+  /// [xOverscrollPadding] > 0, cho phép user tự kéo QUÁ vị trí nghỉ mặc định
+  /// để lộ thêm khoảng trống bên phải (xem doc [xOverscrollPadding]). Set lại
+  /// mỗi [calculateValue] (cùng vòng đời với [maxScrollX]).
+  static double minScrollX = 0.0;
+
   /// Bề rộng strip trục giá bên phải, đọc từ [priceAxisWidthCache] (instance,
   /// sở hữu bởi `_KChartWidgetState` — xem doc [PriceAxisWidthCache]).
   /// [updatePriceAxisWidth] tính lại mỗi frame SAU khi biết label rộng nhất,
@@ -40,13 +46,15 @@ abstract class BaseChartPainter extends CustomPainter {
   /// [priceAxisWidthCache] (xem doc `TimeTickPlanner`, `utils/time_ticks.dart`).
   final TimeTickPlanner timeTickPlanner;
 
-  /// Áp §7.6: `clamp(maxLabelWidth + 14, 48, 96)`, làm tròn lên bội số 8, có
-  /// hysteresis — chỉ THU khi yêu cầu mới thấp hơn giá trị hiện tại ít nhất 1
-  /// bậc 8px trọn vẹn; PHÌNH thì áp ngay (label bị cắt còn tệ hơn 1 frame
-  /// rộng dư). Không hysteresis khi phình sẽ làm nhãn tràn ra ngoài panel lúc
-  /// giá đổi độ dài (vd 999→1000) trong đúng frame đó.
+  /// Áp §7.6: `clamp(maxLabelWidth + 20, 56, 104)` (rộng hơn trước — 14→20,
+  /// 48→56, 96→104, theo yêu cầu trực tiếp "cho axisY rộng ra tí"), làm tròn
+  /// lên bội số 8, có hysteresis — chỉ THU khi yêu cầu mới thấp hơn giá trị
+  /// hiện tại ít nhất 1 bậc 8px trọn vẹn; PHÌNH thì áp ngay (label bị cắt
+  /// còn tệ hơn 1 frame rộng dư). Không hysteresis khi phình sẽ làm nhãn
+  /// tràn ra ngoài panel lúc giá đổi độ dài (vd 999→1000) trong đúng frame
+  /// đó.
   void updatePriceAxisWidth(double maxLabelWidth) {
-    final double raw = (maxLabelWidth + 14.0).clamp(48.0, 96.0);
+    final double raw = (maxLabelWidth + 20.0).clamp(56.0, 104.0);
     final double required = (raw / 8.0).ceil() * 8.0;
     if (required > priceAxisWidth || required <= priceAxisWidth - 8.0) {
       priceAxisWidthCache.value = required;
@@ -159,6 +167,19 @@ abstract class BaseChartPainter extends CustomPainter {
   /// Giá trị padding phải tối đa (px tại [referenceChartWidth]). Thực tế qua [_effectiveRightPaddingPx].
   double xFrontPadding;
 
+  /// Khoảng overscroll TỐI ĐA (px tại [referenceChartWidth], co giãn theo bề
+  /// rộng chart hẹp giống [xFrontPadding] — dùng chung [effectiveRightPaddingPx])
+  /// user được phép kéo QUÁ vị trí nghỉ mặc định (`scrollX = 0`, đã có sẵn
+  /// [xFrontPadding]) để TỰ lộ thêm khoảng trống bên phải — giống hành vi
+  /// Binance/MEXC. Kéo quá rồi thả tay: GIỮ NGUYÊN vị trí đã kéo (không tự
+  /// bật về, không có hiệu ứng elastic/rubber-band) — muốn về lại thì user
+  /// tự kéo ngược. `0.0` (mặc định ở painter — [KChartWidget] tự đặt default
+  /// khác) = tắt hẳn, `scrollX` bị chặn cứng ở `0` như hành vi gốc. PHẢI
+  /// `>= 0` — giá trị âm không có ý nghĩa (không tự crash vì [calculateValue]
+  /// đã chốt `minScrollX` tại `min(0.0, ...)`, nhưng coi như bị bỏ qua/không
+  /// hoạt động đúng như mô tả).
+  double xOverscrollPadding;
+
   /// base dimension
   final BaseDimension baseDimension;
 
@@ -176,6 +197,7 @@ abstract class BaseChartPainter extends CustomPainter {
     required this.baseDimension,
     required this.priceAxisWidthCache,
     required this.timeTickPlanner,
+    this.xOverscrollPadding = 0.0,
     this.isOnTap = false,
     this.offsetY = 0.0,
     this.mainIndicators = const [],
@@ -318,13 +340,6 @@ abstract class BaseChartPainter extends CustomPainter {
   /// draw best bid/best ask badges (order book)
   void drawBidAsk(Canvas canvas);
 
-  /// Padding phải THÊM vào [xFrontPadding] (px, screen space) — hook cho
-  /// painter con cần chừa chỗ trước nến cuối cho nội dung neo mép phải mà bề
-  /// rộng chỉ tính được ở đó (vd box bid/ask — bề rộng phụ thuộc text giá,
-  /// [xFrontPadding] cố định 100px không đủ khi box rộng hơn). Base = 0 (mọi
-  /// painter con không override coi như không có gì thêm).
-  double get extraFrontPaddingPx => 0.0;
-
   /// draw cross line
   void drawCrossLine(Canvas canvas, Size size);
 
@@ -416,6 +431,19 @@ abstract class BaseChartPainter extends CustomPainter {
     if (datas == null) return;
     if (datas!.isEmpty) return;
     maxScrollX = getMinTranslateX().abs();
+    // Cùng cách co giãn theo bề rộng chart hẹp như xFrontPadding (dùng chung
+    // effectiveRightPaddingPx) — scaleX luôn > 0 (đã clamp ở widget qua
+    // minScale/maxScale) nên an toàn chia. xOverscrollPadding=0 (mặc định ở
+    // painter) → minScrollX=0, không đổi hành vi cũ.
+    //
+    // /code-review finding: chốt cứng min(0.0, ...) — xOverscrollPadding là
+    // double public không có validate non-negative; nếu ai lỡ truyền âm,
+    // biểu thức phía trong có thể ra DƯƠNG, khiến minScrollX > maxScrollX (0
+    // khi chart không có gì để scroll) và mọi `.clamp(minScrollX, maxScrollX)`
+    // ở k_chart_widget.dart ném ArgumentError (min > max). Chốt tại nguồn để
+    // KHÔNG cần sửa từng chỗ gọi `.clamp` — minScrollX theo đúng định nghĩa
+    // (cận DƯỚI của vị trí nghỉ 0) không bao giờ được vượt quá 0.
+    minScrollX = min(0.0, -(effectiveRightPaddingPx(xOverscrollPadding, mPlotWidth) / scaleX));
     setTranslateXFromScrollX(scrollX);
     mStartIndex = indexOfTranslateX(xToTranslateX(0));
     // mPlotWidth, không phải mWidth — cạnh phải thật của khối plot (§7.1);
@@ -670,7 +698,7 @@ abstract class BaseChartPainter extends CustomPainter {
   }
 
   double get _effectiveRightPaddingPx =>
-      effectiveRightPaddingPx(xFrontPadding, mPlotWidth) + extraFrontPaddingPx;
+      effectiveRightPaddingPx(xFrontPadding, mPlotWidth);
 
   /// get the minimum value of translation
   double getMinTranslateX() {
