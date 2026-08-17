@@ -539,12 +539,14 @@ KChartWidget(
 
 File: `lib/renderer/chart_painter.dart` — `ChartPainter.drawBidAsk` (chạy ngay sau `drawNowPrice` trong `paint()`, xem sơ đồ §1).
 
-Khi `bidPrice` VÀ `askPrice` cùng non-null, vẽ thêm 1 box nhỏ 2 ô xếp chồng — Ask (đỏ, `chartColors.livePriceStyle.dnColor`) ở trên, Bid (xanh, `chartColors.livePriceStyle.upColor`) ở dưới — đặt CẠNH badge now-price (do `drawNowPrice` vẽ, không đổi gì cả — badge vẫn luôn vẽ độc lập, kể cả khi có `bidPrice`/`askPrice`). Thiếu 1 trong 2 (`null`) thì không vẽ box này.
+Khi `bidPrice` VÀ `askPrice` cùng non-null, vẽ thêm 1 box nhỏ 2 ô xếp chồng — Ask ở trên, Bid ở dưới — đặt CẠNH badge now-price (do `drawNowPrice` vẽ, không đổi gì cả — badge vẫn luôn vẽ độc lập, kể cả khi có `bidPrice`/`askPrice`). Thiếu 1 trong 2 (`null`) thì không vẽ box này.
+
+**Style mỗi ô (yêu cầu trực tiếp — "background là white black theo style và border color theo bid/ask"):** nền `chartColors.bgColor` (trắng/đen theo theme sáng/tối, giống nền chart, KHÔNG còn tô đặc màu bid/ask như bản đầu) + viền (`PaintingStyle.stroke`, `strokeWidth: 1`) màu `dnColor` (Ask)/`upColor` (Bid) — 2 `canvas.drawRRect` chồng nhau CÙNG `rect` (nền trước, viền sau). Chữ nhãn cũng đổi màu theo viền (`resolveTextStyle(chartColors.livePriceStyle.textStyle, dnColor/upColor, forceColor: true)` — ép màu riêng từng ô, bỏ qua `textStyle.color` mặc định trắng vốn hợp với nền đặc màu cũ, không hợp với nền trắng/đen mới). Đổi màu chữ không ảnh hưởng `boxWidth`/`rowHeight` (đo theo font/kích thước, không theo màu) — 2 công thức vị trí bên dưới không cần sửa gì.
 
 **Vị trí ngang — "về phía tâm plot", không cố định 1 phía:**
 
 ```dart
-// Mép trái/phải badge now-price — CÙNG công thức drawNowPrice dùng (paddingX=6, paddingY=4, space=8.0,
+// Mép trái/phải badge now-price — CÙNG công thức drawNowPrice dùng (paddingX=6, paddingY=4, space=5.0,
 // gộp thành static const _liveBadgePaddingX/_liveBadgePaddingY/_liveBadgeSpace dùng chung giữa 2 hàm):
 flagBadgeWidth = priceTp.width + _liveBadgePaddingX * 2
 flagLeft = verticalTextAlignment == right

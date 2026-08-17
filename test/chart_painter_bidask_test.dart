@@ -258,17 +258,21 @@ void main() {
 
           // Thứ tự vẽ cố định: drawNowPrice chạy TRƯỚC drawBidAsk trong
           // paint() (base_chart_painter.dart) -> nền badge live price vẽ
-          // trước, rồi Ask, rồi Bid. Badge chỉ 1 drawRRect (mũi tên vẽ bằng
-          // drawPath, không tính).
+          // trước, rồi Ask (nền + viền), rồi Bid (nền + viền). Badge chỉ 1
+          // drawRRect (mũi tên vẽ bằng drawPath, không tính). Mỗi cell
+          // Ask/Bid vẽ 2 drawRRect chồng nhau CÙNG rect (nền bgColor rồi
+          // viền màu bid/ask, PaintingStyle.stroke) — outerRect giống hệt
+          // nhau nên chỉ cần lấy rect nền ([1], [3]) để kiểm tra vị trí.
           expect(
             globalRRects.length,
-            3,
-            reason: 'badge live price (1) + Ask (1) + Bid (1) — có cái khác lạ '
-                'nghĩa là có code path drawRRect mới cần xem lại test này.',
+            5,
+            reason: 'badge live price (1) + Ask nền+viền (2) + Bid nền+viền '
+                '(2) — có cái khác lạ nghĩa là có code path drawRRect mới '
+                'cần xem lại test này.',
           );
           final badgeRect = globalRRects[0].outerRect;
           final askRect = globalRRects[1].outerRect;
-          final bidRect = globalRRects[2].outerRect;
+          final bidRect = globalRRects[3].outerRect;
 
           // Badge center đúng theo đường dashed — tính lại từ CHÍNH painter
           // đã paint xong (mMainRect đã set). scaleY=1.0, offsetY=0.0 (mặc
@@ -326,10 +330,10 @@ void main() {
             );
 
             final globalRRects = await _capturePaintedRRects(tester, painter);
-            expect(globalRRects.length, 3);
+            expect(globalRRects.length, 5);
             final badgeRect = globalRRects[0].outerRect;
             final askRect = globalRRects[1].outerRect;
-            final bidRect = globalRRects[2].outerRect;
+            final bidRect = globalRRects[3].outerRect;
 
             final double badgeCenterY = (badgeRect.top + badgeRect.bottom) / 2;
             final double boxCenterY = (askRect.top + bidRect.bottom) / 2;
@@ -362,10 +366,10 @@ void main() {
           );
 
           final globalRRects = await _capturePaintedRRects(tester, painter);
-          expect(globalRRects.length, 3);
+          expect(globalRRects.length, 5);
           final badgeRect = globalRRects[0].outerRect;
           final askRect = globalRRects[1].outerRect;
-          final bidRect = globalRRects[2].outerRect;
+          final bidRect = globalRRects[3].outerRect;
 
           // Trong canvas — không âm (trước bug: left ~ -111, vẽ ngoài vùng
           // clip x=[0, size.width], vô hình).

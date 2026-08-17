@@ -290,7 +290,7 @@ if (_lastRender == null || now - _lastRender! > 16) {
 
 ## Bid/Ask badges (order book)
 
-Pass `bidPrice`/`askPrice` (best bid, best ask) to draw a small box stacking Ask (red, top) above Bid (green, bottom), positioned right next to the now-price badge on its left side — **in addition to** it, not replacing it. The now-price badge (flag + number, and the dashed line) keeps drawing exactly as it always did, at exactly the same position, independent of `bidPrice`/`askPrice`. Both share the same Y each frame, so the box moves together with the now-price line as it updates. Same colors as the now-price badge (`KChartColors.livePriceStyle.upColor`/`dnColor`):
+Pass `bidPrice`/`askPrice` (best bid, best ask) to draw a small box stacking Ask (red, top) above Bid (green, bottom), positioned right next to the now-price badge — **in addition to** it, not replacing it. The now-price badge (flag + number, and the dashed line) keeps drawing exactly as it always did, at exactly the same position, independent of `bidPrice`/`askPrice`. Both share the same Y each frame, so the box moves together with the now-price line as it updates. Each cell has a `KChartColors.bgColor` background (white/black, following the chart theme) and a border in the bid/ask color (`KChartColors.livePriceStyle.upColor`/`dnColor`); the label text is colored to match its border instead of the plain white used by the now-price badge:
 
 ```dart
 KChartWidget(
