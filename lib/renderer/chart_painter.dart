@@ -677,14 +677,36 @@ class ChartPainter extends BaseChartPainter {
     final double centerY = _applyScaleY(getMainY(value)).clamp(minY, maxY);
 
     final textStyle = resolveTextStyle(chartColors.livePriceStyle.textStyle, Colors.white);
-    TextPainter buildTp(String text) =>
+    TextPainter buildTp(String text, [TextStyle? style]) =>
         TextPainter(
-          text: TextSpan(text: text, style: textStyle),
+          text: TextSpan(text: text, style: style ?? textStyle),
           textDirection: TextDirection.ltr,
         )..layout();
 
-    final askTp = buildTp('$askLabel ${NumberUtil.formatFixed(askPrice!, fixedLength) ?? ''}');
-    final bidTp = buildTp('$bidLabel ${NumberUtil.formatFixed(bidPrice!, fixedLength) ?? ''}');
+    // Nền box giờ là bgColor (trắng/đen theo style sáng/tối, KHÔNG phải màu
+    // đặc upColor/dnColor như trước) + viền màu theo bid/ask (yêu cầu trực
+    // tiếp) — chữ phải đổi màu theo luôn (forceColor: true, bỏ qua
+    // `textStyle.color` mặc định trắng cũ — trắng trên nền trắng sẽ vô hình),
+    // KHÔNG ảnh hưởng `textStyle` dùng cho `priceTp`/badge now-price
+    // (drawNowPrice không đổi gì, vẫn nền đặc + chữ trắng như cũ).
+    final askTextStyle = resolveTextStyle(
+      chartColors.livePriceStyle.textStyle,
+      chartColors.livePriceStyle.dnColor,
+      forceColor: true,
+    );
+    final bidTextStyle = resolveTextStyle(
+      chartColors.livePriceStyle.textStyle,
+      chartColors.livePriceStyle.upColor,
+      forceColor: true,
+    );
+    final askTp = buildTp(
+      '$askLabel ${NumberUtil.formatFixed(askPrice!, fixedLength) ?? ''}',
+      askTextStyle,
+    );
+    final bidTp = buildTp(
+      '$bidLabel ${NumberUtil.formatFixed(bidPrice!, fixedLength) ?? ''}',
+      bidTextStyle,
+    );
 
     final double rowHeight = askTp.height + _bidAskPaddingY * 2;
     final double boxWidth =
@@ -728,10 +750,17 @@ class ChartPainter extends BaseChartPainter {
         ? flagLeft - _bidAskGapNextToFlag - boxWidth
         : flagRight + _bidAskGapNextToFlag;
 
-    void drawCell(Rect rect, Color color, TextPainter tp) {
+    // Nền trắng/đen theo style (bgColor) + viền màu theo bid/ask (yêu cầu
+    // trực tiếp — trước đó nền là màu đặc upColor/dnColor).
+    void drawCell(Rect rect, Color borderColor, TextPainter tp) {
+      final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(3));
+      canvas.drawRRect(rrect, Paint()..color = chartColors.bgColor);
       canvas.drawRRect(
-        RRect.fromRectAndRadius(rect, const Radius.circular(3)),
-        Paint()..color = color,
+        rrect,
+        Paint()
+          ..color = borderColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
       );
       tp.paint(
         canvas,

@@ -913,13 +913,15 @@ PHA 2 (bất đồng bộ, SAU 1 frame layout — CHỈ chạy khi restore xảy
 
 ### 6.14 `bidPrice`/`askPrice` — box Ask/Bid cạnh badge now-price
 
-Khi CẢ HAI `bidPrice` VÀ `askPrice` cùng non-null, vẽ thêm 1 box nhỏ 2 ô xếp chồng — Ask (màu `dnColor`) trên, Bid (màu `upColor`) dưới — NGAY SAU khi vẽ xong đường + badge now-price (§6.12), trong cùng 1 lần vẽ frame. Thiếu 1 trong 2 (`null`) → không vẽ box này; đường/badge now-price không bị ảnh hưởng gì (luôn vẽ độc lập, không phụ thuộc `bidPrice`/`askPrice`).
+Khi CẢ HAI `bidPrice` VÀ `askPrice` cùng non-null, vẽ thêm 1 box nhỏ 2 ô xếp chồng — Ask trên, Bid dưới — NGAY SAU khi vẽ xong đường + badge now-price (§6.12), trong cùng 1 lần vẽ frame. Thiếu 1 trong 2 (`null`) → không vẽ box này; đường/badge now-price không bị ảnh hưởng gì (luôn vẽ độc lập, không phụ thuộc `bidPrice`/`askPrice`).
+
+**Style mỗi ô — nền theo theme, viền theo bid/ask:** nền = `bgColor` (trắng/đen theo theme sáng/tối, giống nền chart chứ KHÔNG phải tô đặc màu bid/ask như thiết kế ban đầu) + viền (stroke, `strokeWidth = 1`) màu `dnColor` (Ask)/`upColor` (Bid) — vẽ 2 rounded-rect chồng nhau CÙNG toạ độ (nền trước, viền sau). Chữ nhãn cũng đổi màu theo viền thay vì trắng cố định như badge now-price. Đổi màu KHÔNG ảnh hưởng `boxWidth`/`rowHeight` (đo theo kích thước chữ, không theo màu) — 2 công thức vị trí bên dưới không đổi.
 
 **Vị trí ngang — "về phía tâm plot" so với badge now-price, KHÔNG cố định 1 phía:**
 
 ```
 // Mép trái/phải badge now-price — dùng ĐÚNG công thức tính offsetX của badge now-price (§3.4 dòng "Now-price", §6.16):
-badgePaddingX = 6, badgeSpace = 8   // hằng số CỐ ĐỊNH, không co giãn theo scaleX/chartWidth (badgePaddingY = 4 cho chiều dọc, xem §6.16)
+badgePaddingX = 6, badgeSpace = 5   // hằng số CỐ ĐỊNH, không co giãn theo scaleX/chartWidth (badgePaddingY = 4 cho chiều dọc, xem §6.16)
 flagBadgeWidth = measureTextWidth(formatFixed(nowPriceValue, fixedLength)) + badgePaddingX * 2
 flagLeft  = verticalTextAlignment == right
     ? plotWidth - badgeSpace       // badge đẩy ra ngoài, lấn `badgeSpace` px vào plot — KHÔNG trừ flagBadgeWidth (§6.16)
