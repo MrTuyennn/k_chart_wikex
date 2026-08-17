@@ -921,7 +921,7 @@ Khi CẢ HAI `bidPrice` VÀ `askPrice` cùng non-null, vẽ thêm 1 box nhỏ 2 
 
 ```
 // Mép trái/phải badge now-price — dùng ĐÚNG công thức tính offsetX của badge now-price (§3.4 dòng "Now-price", §6.16):
-badgePaddingX = 6, badgeSpace = 5   // hằng số CỐ ĐỊNH, không co giãn theo scaleX/chartWidth (badgePaddingY = 4 cho chiều dọc, xem §6.16)
+badgePaddingX = 3, badgeSpace = 0   // hằng số CỐ ĐỊNH, không co giãn theo scaleX/chartWidth (badgePaddingY = 3 cho chiều dọc, xem §6.16)
 flagBadgeWidth = measureTextWidth(formatFixed(nowPriceValue, fixedLength)) + badgePaddingX * 2
 flagLeft  = verticalTextAlignment == right
     ? plotWidth - badgeSpace       // badge đẩy ra ngoài, lấn `badgeSpace` px vào plot — KHÔNG trừ flagBadgeWidth (§6.16)
@@ -935,7 +935,7 @@ left = verticalTextAlignment == right
     : flagRight + boxGap             // left:  badge sát trái  -> box qua PHẢI badge (vào giữa plot)
 ```
 
-> **⚠️ MUST MATCH — không được rút gọn "box luôn bên trái badge" bất kể alignment.** Với `right` (mặc định), đặt box bên trái badge đúng — badge sát mép phải, box lùi vào trong. Nhưng với `left`, badge đã sát mép TRÁI plot (`flagLeft = badgeSpace = 5`) — nếu vẫn đặt box "bên trái badge" sẽ cho `left` ÂM, ngoài vùng clip `[0, plotWidth]` (§3.1) — box vẽ hoàn toàn ngoài canvas, vô hình. Bug thật đã gặp (phát hiện qua code review, không phải lý thuyết) — port PHẢI giữ đúng nhánh mirror theo `verticalTextAlignment` ở trên, test riêng cả 2 giá trị `left`/`right` khi có `bidPrice`/`askPrice`.
+> **⚠️ MUST MATCH — không được rút gọn "box luôn bên trái badge" bất kể alignment.** Với `right` (mặc định), đặt box bên trái badge đúng — badge sát mép phải, box lùi vào trong. Nhưng với `left`, badge đã sát mép TRÁI plot (`flagLeft = badgeSpace = 0`) — nếu vẫn đặt box "bên trái badge" sẽ cho `left` ÂM, ngoài vùng clip `[0, plotWidth]` (§3.1) — box vẽ hoàn toàn ngoài canvas, vô hình. Bug thật đã gặp (phát hiện qua code review, không phải lý thuyết) — port PHẢI giữ đúng nhánh mirror theo `verticalTextAlignment` ở trên, test riêng cả 2 giá trị `left`/`right` khi có `bidPrice`/`askPrice`.
 
 **Vị trí dọc — LUÔN center theo Y của badge now-price, không có trường hợp ngoại lệ:**
 
@@ -973,11 +973,11 @@ Trước đây badge now-price (`VerticalTextAlignment.right`, mặc định) lu
 offsetX = plotWidth - badgeSpace
 ```
 
-Chỉ trừ `badgeSpace` (=5), KHÔNG trừ thêm `flagBadgeWidth` — mép TRÁI badge (nơi mũi tên chỉ vào chart) lấn nhẹ `badgeSpace` px vào vùng plot để "chạm" đúng đường now-price dashed; toàn bộ THÂN badge (số giá) nằm trên price-axis strip (`[plotWidth, width]`). `VerticalTextAlignment.left` không đổi (`offsetX = badgeSpace`) — không có price-axis strip bên trái để đẩy ra.
+Chỉ trừ `badgeSpace` (=0, không còn lấn vào plot ở giá trị hiện tại), KHÔNG trừ thêm `flagBadgeWidth` — mép TRÁI badge (nơi mũi tên chỉ vào chart) lấn nhẹ `badgeSpace` px vào vùng plot để "chạm" đúng đường now-price dashed; toàn bộ THÂN badge (số giá) nằm trên price-axis strip (`[plotWidth, width]`). `VerticalTextAlignment.left` không đổi (`offsetX = badgeSpace`) — không có price-axis strip bên trái để đẩy ra.
 
 **Padding quanh chữ (trong) VÀ khoảng lấn vào plot (ngoài) đã điều chỉnh** qua các yêu cầu trực tiếp tiếp theo:
-- `badgePaddingX`/`badgePaddingY` (padding TRONG, quanh chữ) chốt ở **6** / **4** (từng thử tăng lên 8/5 theo mẫu hình MEXC rồi giảm lại).
-- `badgeSpace` (padding NGOÀI — khoảng lấn vào plot khi đóng `right`, khoảng cách mép khi đóng `left`) chốt ở **5** (từng thử tăng lên 8 rồi revert lại — yêu cầu trực tiếp "nằm ra ngoài cùng và cách 5px thui").
+- `badgePaddingX`/`badgePaddingY` (padding TRONG, quanh chữ) chốt ở **3** / **3** (từng thử tăng lên 8/5 theo mẫu hình MEXC, giảm dần 6/4 → 5/3 → 3/3, đợt cuối chỉnh trực tiếp trong code).
+- `badgeSpace` (padding NGOÀI — khoảng lấn vào plot khi đóng `right`, khoảng cách mép khi đóng `left`) chốt ở **0** (từng thử tăng lên 8, revert về 5, giảm dần 5→3→0, đợt cuối chỉnh trực tiếp trong code). Ở `0`: đóng `right` không còn lấn vào plot (mép trái badge khớp đúng `mPlotWidth`); đóng `left` badge sát tuyệt đối mép trái canvas.
 - Cả 3 hằng số dùng chung giữa công thức badge (`drawNowPrice`) và `flagBadgeWidth`/`flagLeft` của box Ask/Bid (§6.14) — port đổi 1 nơi, tự động khớp cả 2.
 - `priceAxisWidth` (§4) cũng nới rộng tương ứng — xem công thức `clamp(maxLabelWidth + 20, 56, 104)` ở trên (trước: `+14, 48, 96`).
 
