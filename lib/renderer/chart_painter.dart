@@ -607,24 +607,25 @@ class ChartPainter extends BaseChartPainter {
 
     double paddingX = _liveBadgePaddingX, paddingY = _liveBadgePaddingY;
     double space = _liveBadgeSpace;
+    final badgeWidth = tp.width + paddingX * 2;
     double offsetX;
     switch (verticalTextAlignment) {
       case VerticalTextAlignment.left:
         offsetX = space;
         break;
       case VerticalTextAlignment.right:
-        // Đẩy hẳn ra ngoài, nằm TRÊN price-axis strip (yêu cầu trực tiếp) —
-        // khác trước (nằm gọn trong mPlotWidth). Chỉ trừ `space` (không trừ
-        // thêm `tp.width + paddingX*2` như cũ) — mép TRÁI badge (nơi mũi tên
-        // của LivePriceBadgePainter trỏ vào, xem doc field đó) chỉ lấn nhẹ
-        // `space` px vào plot để "chạm" đúng đường now-price, còn lại toàn bộ
-        // thân badge nằm trên strip giá bên phải `mPlotWidth`.
-        offsetX = mPlotWidth - space;
+        // Sát tuyệt đối mép PHẢI của `mWidth` (yêu cầu trực tiếp "sát mép
+        // width luôn khỏi padding") — khác trước (`mPlotWidth - space`, mép
+        // TRÁI badge cố định ở `mPlotWidth` còn mép phải trôi theo độ dài text
+        // nên có thể hở khoảng trắng tới mép canvas khi `priceAxisWidth`
+        // (clamp theo label trục giá, không phải theo badge) rộng hơn
+        // `badgeWidth`). Tính từ mép PHẢI trừ ngược lại để LUÔN khớp mép
+        // canvas bất kể độ dài giá.
+        offsetX = mWidth - badgeWidth;
         break;
     }
 
     double top = y - tp.height / 2;
-    final badgeWidth = tp.width + paddingX * 2;
     final badgeHeight = tp.height + paddingY * 2;
 
     // Nền badge "flag" — width/height tự scale theo độ dài text giá
@@ -740,11 +741,11 @@ class ChartPainter extends BaseChartPainter {
     // lên badge đó.
     final priceTp = buildTp(NumberUtil.formatFixed(value, fixedLength) ?? '');
     final double flagBadgeWidth = priceTp.width + _liveBadgePaddingX * 2;
-    // `right`: khớp đúng offsetX mới của drawNowPrice (đẩy ra ngoài, nằm
-    // trên price-axis strip — chỉ trừ `space`, không trừ thêm `flagBadgeWidth`
-    // như trước). 2 công thức PHẢI khớp nhau, sửa 1 bên thì sửa luôn bên kia.
+    // `right`: khớp đúng offsetX mới của drawNowPrice (`mWidth - badgeWidth`,
+    // sát tuyệt đối mép phải canvas). 2 công thức PHẢI khớp nhau, sửa 1 bên
+    // thì sửa luôn bên kia.
     final double flagLeft = verticalTextAlignment == VerticalTextAlignment.right
-        ? mPlotWidth - _liveBadgeSpace
+        ? mWidth - flagBadgeWidth
         : _liveBadgeSpace;
     final double flagRight = flagLeft + flagBadgeWidth;
 
