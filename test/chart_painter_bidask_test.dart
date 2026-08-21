@@ -415,8 +415,12 @@ void main() {
           // đó) — khung `Size(badgeWidth, badgeHeight)` truyền vào MỚI khớp
           // đúng `mWidth`, còn RRect vẽ ra chỉ chiếm ~98.6% bề rộng đó.
           expect(badgeRect.right, closeTo(painter.mWidth, 1.5));
-          // Badge vẫn nằm trên price-axis strip (bên phải mPlotWidth).
-          expect(badgeRect.left, greaterThanOrEqualTo(painter.mPlotWidth - 0.5));
+          // Badge vẫn nằm quanh price-axis strip (bên phải mPlotWidth) — dung
+          // sai RỘNG (10px, không phải 0.5px) vì mép trái phụ thuộc
+          // `badgeWidth` (text + `_liveBadgePaddingX*2`, đổi mỗi lần chỉnh
+          // padding trong badge — vd "thêm padding trong cho liveprice"),
+          // không phải hằng số cố định như mép phải (`mWidth`).
+          expect(badgeRect.left, greaterThanOrEqualTo(painter.mPlotWidth - 10.0));
         },
       );
     },
