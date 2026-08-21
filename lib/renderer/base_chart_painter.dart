@@ -46,15 +46,16 @@ abstract class BaseChartPainter extends CustomPainter {
   /// [priceAxisWidthCache] (xem doc `TimeTickPlanner`, `utils/time_ticks.dart`).
   final TimeTickPlanner timeTickPlanner;
 
-  /// Áp §7.6: `clamp(maxLabelWidth + 20, 56, 104)` (rộng hơn trước — 14→20,
-  /// 48→56, 96→104, theo yêu cầu trực tiếp "cho axisY rộng ra tí"), làm tròn
-  /// lên bội số 8, có hysteresis — chỉ THU khi yêu cầu mới thấp hơn giá trị
-  /// hiện tại ít nhất 1 bậc 8px trọn vẹn; PHÌNH thì áp ngay (label bị cắt
-  /// còn tệ hơn 1 frame rộng dư). Không hysteresis khi phình sẽ làm nhãn
-  /// tràn ra ngoài panel lúc giá đổi độ dài (vd 999→1000) trong đúng frame
-  /// đó.
+  /// Áp §7.6: `clamp(maxLabelWidth + 4, 40, 80)` (hẹp thêm theo yêu cầu trực
+  /// tiếp "chỉnh thêm tí nữa cho ngắn hơn" — 12→4, cận dưới giữ 40, 88→80).
+  /// Lịch sử: 14/48/96 (gốc) → 20/56/104 (rộng ra) → 16/48/96 (hẹp lại) →
+  /// 12/40/88 (hẹp thêm) → 4/40/80 (hẹp thêm lần nữa). Vẫn làm tròn lên bội
+  /// số 8, có hysteresis — chỉ THU khi yêu cầu mới thấp hơn giá trị hiện tại
+  /// ít nhất 1 bậc 8px trọn vẹn; PHÌNH thì áp ngay (label bị cắt còn tệ hơn 1
+  /// frame rộng dư). Không hysteresis khi phình sẽ làm nhãn tràn ra ngoài
+  /// panel lúc giá đổi độ dài (vd 999→1000) trong đúng frame đó.
   void updatePriceAxisWidth(double maxLabelWidth) {
-    final double raw = (maxLabelWidth + 20.0).clamp(56.0, 104.0);
+    final double raw = (maxLabelWidth + 4.0).clamp(40.0, 80.0);
     final double required = (raw / 8.0).ceil() * 8.0;
     if (required > priceAxisWidth || required <= priceAxisWidth - 8.0) {
       priceAxisWidthCache.value = required;
@@ -443,7 +444,10 @@ abstract class BaseChartPainter extends CustomPainter {
     // ở k_chart_widget.dart ném ArgumentError (min > max). Chốt tại nguồn để
     // KHÔNG cần sửa từng chỗ gọi `.clamp` — minScrollX theo đúng định nghĩa
     // (cận DƯỚI của vị trí nghỉ 0) không bao giờ được vượt quá 0.
-    minScrollX = min(0.0, -(effectiveRightPaddingPx(xOverscrollPadding, mPlotWidth) / scaleX));
+    minScrollX = min(
+      0.0,
+      -(effectiveRightPaddingPx(xOverscrollPadding, mPlotWidth) / scaleX),
+    );
     setTranslateXFromScrollX(scrollX);
     mStartIndex = indexOfTranslateX(xToTranslateX(0));
     // mPlotWidth, không phải mWidth — cạnh phải thật của khối plot (§7.1);

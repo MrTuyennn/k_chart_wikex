@@ -4,9 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:k_chart_jk/k_chart_plus.dart';
 import 'package:k_chart_jk/renderer/base_dimension.dart';
 
-// Yêu cầu trực tiếp từ user: "cho axisY rộng ra tí" — tăng công thức
-// `updatePriceAxisWidth` (BaseChartPainter, §7.6 CHART_AXES.md): offset cộng
-// thêm 14→20, cận dưới 48→56, cận trên 96→104 (vẫn làm tròn lên bội số 8).
+// Yêu cầu trực tiếp từ user: "chỉnh thêm tí nữa cho ngắn hơn" — giảm thêm
+// công thức `updatePriceAxisWidth` (BaseChartPainter, §7.6 CHART_AXES.md):
+// offset cộng thêm 12→4, cận trên 88→80 (cận dưới giữ 40, vẫn làm tròn lên
+// bội số 8). Lịch sử: 14/48/96 (gốc) → 20/56/104 (rộng ra) → 16/48/96 (hẹp
+// lại) → 12/40/88 (hẹp thêm) → 4/40/80 (hẹp thêm lần nữa).
 
 List<KLineEntity> _syntheticCandles(int count) {
   final base = DateTime(2024, 1, 1).millisecondsSinceEpoch;
@@ -53,24 +55,24 @@ ChartPainter _buildPainter(List<KLineEntity> candles) {
 }
 
 void main() {
-  group('BaseChartPainter.updatePriceAxisWidth — cận mới (56–104, offset +20)', () {
-    test('maxLabelWidth nhỏ -> kẹp ở cận dưới MỚI (56), không còn 48', () {
+  group('BaseChartPainter.updatePriceAxisWidth — cận mới (40–80, offset +4)', () {
+    test('maxLabelWidth nhỏ -> kẹp ở cận dưới (40)', () {
       final painter = _buildPainter(_syntheticCandles(10));
       painter.updatePriceAxisWidth(0.0);
-      expect(painter.priceAxisWidth, 56.0);
+      expect(painter.priceAxisWidth, 40.0);
     });
 
-    test('maxLabelWidth lớn -> kẹp ở cận trên MỚI (104), không còn 96', () {
+    test('maxLabelWidth lớn -> kẹp ở cận trên MỚI (80), không còn 88', () {
       final painter = _buildPainter(_syntheticCandles(10));
       painter.updatePriceAxisWidth(500.0);
-      expect(painter.priceAxisWidth, 104.0);
+      expect(painter.priceAxisWidth, 80.0);
     });
 
-    test('maxLabelWidth vừa -> maxLabelWidth + 20, làm tròn lên bội số 8', () {
+    test('maxLabelWidth vừa -> maxLabelWidth + 4, làm tròn lên bội số 8', () {
       final painter = _buildPainter(_syntheticCandles(10));
-      // 50 + 20 = 70 -> làm tròn lên bội số 8 gần nhất = 72.
+      // 50 + 4 = 54 -> làm tròn lên bội số 8 gần nhất = 56.
       painter.updatePriceAxisWidth(50.0);
-      expect(painter.priceAxisWidth, 72.0);
+      expect(painter.priceAxisWidth, 56.0);
     });
   });
 }

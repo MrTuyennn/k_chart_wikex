@@ -86,6 +86,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
           transport ?? MarketStompTransport(stompUrl: MarketEnv.stompUrl),
       super(_initialState()) {
     on<ChartStarted>(_onStarted);
+    on<ChartSymbolChanged>(_onSymbolChanged);
     on<ChartTimeframeChanged>(_onTimeframeChanged);
     on<ChartMainIndicatorToggled>(_onMainIndicatorToggled);
     on<ChartSecondaryIndicatorToggled>(_onSecondaryIndicatorToggled);
@@ -166,7 +167,10 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
   double? _pendingLivePrice;
   static const Duration _livePriceCoalesce = Duration(milliseconds: 150);
 
-  static String get _topicPath => MarketEnv.symbol; // đã đúng dạng BASE/QUOTE
+  // Instance getter (không còn `static`) — đọc `state.symbol` (đổi được qua
+  // ChartSymbolChanged), khác trước khi symbol là hằng số compile-time
+  // MarketEnv.symbol duy nhất.
+  String get _topicPath => state.symbol; // đã đúng dạng BASE/QUOTE
 
   /// true = bật sẵn TOÀN BỘ indicator lúc mở app (demo xem hết cùng lúc);
   /// false = tắt hết, user tự bật qua chip. Đổi 1 chỗ duy nhất ở đây, không
@@ -176,6 +180,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
   static ChartState _initialState() {
     return const ChartState(
       data: [],
+      symbol: MarketEnv.symbol,
       timeframe: ChartTimeframe.h1,
       mainTypes: _kIndicatorsEnabledByDefault
           ? {
@@ -265,6 +270,55 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     }
   }
 
+  // ── Symbol switch (đổi coin) ─────────────────────────────────────────────
+
+  /// Đổi coin (vd `BTC/USDT` -> `ETH/USDT`) — theo đúng thứ tự mô tả trong
+  /// `trade-coin-switch-flow.md` (bản rút gọn cho demo app này, không có
+  /// picker sheet/`TradeDetailCubit` riêng — chỉ 1 Bloc):
+  ///  1. Huỷ subscription WS + buffer coalesce của coin CŨ trước (tránh frame
+  ///     trễ của coin cũ lẫn vào series coin mới).
+  ///  2. Emit state MỚI dựng qua constructor (KHÔNG `copyWith`) — cần set
+  ///     `livePrice`/`orderBook` VỀ NULL, mà `copyWith` hiện dùng pattern
+  ///     `field ?? this.field` nên không set về null được (chỉ `error` có
+  ///     sentinel `_unset` cho việc này). Field chart/UI preference
+  ///     (`timeframe`, indicator, style, theme...) GIỮ NGUYÊN từ state cũ —
+  ///     đổi coin không đổi các lựa chọn hiển thị đang chọn.
+  ///  3. Refetch REST history theo coin mới.
+  ///  4. Subscribe lại WS theo coin mới, nếu trước đó đang bật live.
+  Future<void> _onSymbolChanged(
+    ChartSymbolChanged event,
+    Emitter<ChartState> emit,
+  ) async {
+    if (state.symbol == event.symbol) return;
+    final wasLive = state.isLive;
+    await _unsubscribeRealtime();
+    _orderBookMerge.reset();
+    emit(
+      ChartState(
+        data: const [],
+        symbol: event.symbol,
+        timeframe: state.timeframe,
+        mainTypes: state.mainTypes,
+        secondaryTypes: state.secondaryTypes,
+        savedChartScale: state.savedChartScale,
+        isLine: state.isLine,
+        candleBodyStyle: state.candleBodyStyle,
+        volHidden: state.volHidden,
+        isDark: state.isDark,
+        showDepth: state.showDepth,
+        depthBottomLabelCount: state.depthBottomLabelCount,
+        isFetching: true,
+        hasMoreHistory: true,
+        isLive: state.isLive,
+        showBidAsk: state.showBidAsk,
+      ),
+    );
+    await _loadHistory(state.timeframe, emit);
+    if (wasLive && state.error == null) {
+      _subscribeRealtime();
+    }
+  }
+
   Future<void> _onTimeframeChanged(
     ChartTimeframeChanged event,
     Emitter<ChartState> emit,
@@ -291,6 +345,12 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
       return;
     }
     emit(state.copyWith(isFetching: true, error: null));
+    // Chốt symbol NGAY LÚC BẮT ĐẦU fetch — nếu user đổi coin (ChartSymbolChanged)
+    // trong lúc đang chờ REST, `state.symbol` sẽ đổi khác biến này; check song
+    // song với `state.timeframe != timeframe` (đã có sẵn) ở mọi điểm return
+    // sớm bên dưới để không emit đè data của symbol MỚI bằng response của
+    // symbol CŨ đến trễ.
+    final symbol = state.symbol;
     try {
       final toMs = DateTime.now().toUtc().millisecondsSinceEpoch;
       final intervalMs = timeframe.interval.inMilliseconds;
@@ -308,13 +368,15 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
         bars = await fetchMarketHistory(
           apiBaseUrl: MarketEnv.apiBaseUrl,
           historyPath: MarketEnv.historyPath,
-          symbol: MarketEnv.symbol,
+          symbol: symbol,
           resolution: timeframe.restResolution,
           period: timeframe.wsPeriod,
           fromMs: fromMs,
           toMs: toMs,
         );
-        if (isClosed || state.timeframe != timeframe) return; // đã đổi khung khác
+        if (isClosed || state.timeframe != timeframe || state.symbol != symbol) {
+          return; // đã đổi khung/coin khác
+        }
         if (bars.length >= ChartState.initialBatchSize || bars.isEmpty) break;
         windowMultiplier *= 4;
       }
@@ -325,7 +387,9 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
         bars = bars.sublist(bars.length - ChartState.initialBatchSize);
       }
       await _withRecalcLock(() async {
-        if (isClosed || state.timeframe != timeframe) return;
+        if (isClosed || state.timeframe != timeframe || state.symbol != symbol) {
+          return;
+        }
         var next = state.copyWith(
           data: [for (final b in bars) b.toEntity()],
           isFetching: false,
@@ -333,13 +397,16 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
           error: null,
         );
         final computed = await _recalculateState(next);
-        if (isClosed || state.timeframe != timeframe)
-          return; // đổi khung lúc chờ isolate
+        if (isClosed || state.timeframe != timeframe || state.symbol != symbol) {
+          return; // đổi khung/coin lúc chờ isolate
+        }
         next = next.copyWith(data: computed);
         emit(next);
       });
     } catch (e) {
-      if (isClosed || state.timeframe != timeframe) return;
+      if (isClosed || state.timeframe != timeframe || state.symbol != symbol) {
+        return;
+      }
       emit(state.copyWith(isFetching: false, error: e.toString()));
     }
   }
@@ -356,13 +423,14 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     if (state.data.isEmpty) return;
 
     final timeframe = state.timeframe;
+    final symbol = state.symbol; // chốt tại lúc bắt đầu — xem doc _loadHistory
     final oldestMs = state.data.first.time!;
     emit(state.copyWith(isFetching: true));
     try {
       final bars = await fetchMarketHistory(
         apiBaseUrl: MarketEnv.apiBaseUrl,
         historyPath: MarketEnv.historyPath,
-        symbol: MarketEnv.symbol,
+        symbol: symbol,
         resolution: timeframe.restResolution,
         period: timeframe.wsPeriod,
         fromMs:
@@ -371,10 +439,13 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
         toMs: oldestMs - 1, // tránh trùng bar cũ nhất đang có
       );
       if (isClosed) return;
-      if (state.timeframe != timeframe)
-        return; // user đã đổi khung trong lúc chờ
+      if (state.timeframe != timeframe || state.symbol != symbol) {
+        return; // user đã đổi khung/coin trong lúc chờ
+      }
       await _withRecalcLock(() async {
-        if (isClosed || state.timeframe != timeframe) return;
+        if (isClosed || state.timeframe != timeframe || state.symbol != symbol) {
+          return;
+        }
         // state.data đọc lại BÊN TRONG khoá, SAU await fetch — không mất các
         // bar WS merge vào trong lúc chờ. Dedupe theo time phòng server trả
         // lấn biên.
@@ -389,8 +460,9 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
           hasMoreHistory: bars.isNotEmpty,
         );
         final computed = await _recalculateState(next);
-        if (isClosed || state.timeframe != timeframe)
-          return; // đổi khung lúc chờ isolate
+        if (isClosed || state.timeframe != timeframe || state.symbol != symbol) {
+          return; // đổi khung/coin lúc chờ isolate
+        }
         next = next.copyWith(data: computed);
         emit(next);
       });
@@ -463,7 +535,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
 
   void _onKlineFrame(RealtimeFrame frame) {
     if (isClosed) return;
-    final kline = tryParseKlineFrame(frame, symbol: MarketEnv.symbol);
+    final kline = tryParseKlineFrame(frame, symbol: state.symbol);
     if (kline == null) {
       return; // chỉ bỏ đúng frame lỗi — KHÔNG đụng vào _pending
     }
@@ -483,7 +555,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     if (isClosed) return;
     final thumb = tryParseThumbFrame(frame);
     // Stream global — tự lọc đúng cặp đang xem.
-    if (thumb == null || thumb.symbol != MarketEnv.symbol) return;
+    if (thumb == null || thumb.symbol != state.symbol) return;
     _queueLivePrice(thumb.close);
   }
 
@@ -507,7 +579,7 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     if (isClosed) return;
     final side = tryParseOrderBookSideFrame(
       frame,
-      expectedSymbol: MarketEnv.symbol,
+      expectedSymbol: state.symbol,
     );
     if (side == null) return; // chỉ bỏ đúng frame lỗi, snapshot giữ nguyên
     _orderBookMerge.apply(side);
