@@ -14,6 +14,11 @@ void main() {
   runApp(const MyApp());
 }
 
+/// Danh sách coin demo cho nút chuyển đổi trong AppBar (xem
+/// `_ChartDemoPageState._buildSymbolSwitch`) — chỉ 2 coin theo yêu cầu, không
+/// phải catalog đầy đủ như symbol picker thật (xem `trade-coin-switch-flow.md`).
+const List<String> _kSymbolOptions = ['BTC/USDT', 'ETH/USDT'];
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -283,14 +288,7 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
       title: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            MarketEnv.symbol,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: shellState.isDark ? Colors.white : Colors.black,
-            ),
-          ),
+          _buildSymbolSwitch(shellState.isDark),
           _buildPriceTicker(),
         ],
       ),
@@ -322,6 +320,52 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
               context.read<ChartBloc>().add(const ChartThemeToggled()),
         ),
       ],
+    );
+  }
+
+  /// Tên cặp trong AppBar — bấm mở menu đổi coin (`ChartSymbolChanged`), theo
+  /// đúng chỗ "bấm vào tên cặp trên header" mô tả trong
+  /// `trade-coin-switch-flow.md` §1 (bản rút gọn: `PopupMenuButton` 2 lựa
+  /// chọn thay vì bottom sheet catalog đầy đủ). `BlocBuilder` riêng, hẹp
+  /// (`buildWhen` chỉ theo `symbol`) — cùng lý do tách khỏi shell như
+  /// [_buildPriceTicker] ngay dưới: đổi coin không nên kéo theo rebuild
+  /// AppBar ngoài đúng phần tên cặp.
+  Widget _buildSymbolSwitch(bool isDark) {
+    return BlocBuilder<ChartBloc, ChartState>(
+      buildWhen: (prev, curr) => prev.symbol != curr.symbol,
+      builder: (context, state) {
+        return PopupMenuButton<String>(
+          initialValue: state.symbol,
+          tooltip: 'Đổi coin',
+          onSelected: (symbol) =>
+              context.read<ChartBloc>().add(ChartSymbolChanged(symbol)),
+          itemBuilder: (context) => [
+            for (final symbol in _kSymbolOptions)
+              PopupMenuItem(value: symbol, child: Text(symbol)),
+          ],
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  state.symbol,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? Colors.white : Colors.black,
+                  ),
+                ),
+                Icon(
+                  Icons.arrow_drop_down,
+                  size: 20,
+                  color: isDark ? Colors.white70 : Colors.black54,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

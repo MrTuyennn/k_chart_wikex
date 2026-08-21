@@ -120,9 +120,6 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
       height: _contentRect.height,
       targetTicks: _kTargetPriceTicks,
     );
-    _priceStep = _priceTicks.length >= 2
-        ? _priceTicks[1] - _priceTicks[0]
-        : (effectiveMaxPrice - effectiveMinPrice).abs();
   }
 
   /// Giá tại 1 toạ độ Y màn hình — nghịch đảo của [_priceToScreenY] (không
@@ -144,7 +141,6 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
 
   static const int _kTargetPriceTicks = 6;
   late final List<double> _priceTicks;
-  late final double _priceStep;
 
   /// Cache `TextPainter` đã `layout()` theo `(string, style)` — dùng chung
   /// TOÀN PROCESS an toàn (khác `PriceAxisWidthCache`/`TimeTickPlanner`: đây
@@ -179,11 +175,10 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
   /// volume/secondary), nên strip giá đo theo panel này.
   double measureMaxLabelWidth(TextStyle textStyle) {
     if (_priceTicks.isEmpty) return 0;
-    final int decimals = decimalsFor(_priceStep);
     double maxWidth = 0;
     for (final price in _priceTicks) {
       final tp = _cachedPriceLabel(
-        NumberUtil.formatFixed(price, decimals) ?? '',
+        NumberUtil.formatFixed(price, fixedLength) ?? '',
         textStyle,
       );
       if (tp.width > maxWidth) maxWidth = tp.width;
@@ -442,19 +437,22 @@ class MainRenderer extends BaseChartRenderer<CandleEntity> {
 
   /// Vẽ nhãn giá tại các mốc "tròn số" đã tính trong constructor (§6.3), thay
   /// vì chia đều pixel rồi suy ngược ra giá (label khi đó không phải số tròn).
-  /// Số chữ số thập phân theo `decimalsFor(step)` (§6.4) — KHÔNG dùng
-  /// `fixedLength` cố định, để cặp giá rất nhỏ (vd `0.00001234`) vẫn hiện đúng
-  /// thay vì bị làm tròn về `0.00` trùng lặp.
+  /// Số chữ số thập phân dùng `fixedLength` (yêu cầu trực tiếp "axis Y cho
+  /// giống liveprice") — KHÔNG còn tự suy theo `decimalsFor(step)` như trước
+  /// (khác trước: `decimals` tăng/giảm theo độ zoom nên có thể lệch số thập
+  /// phân so với badge live price ngay cạnh). Đánh đổi CHẤP NHẬN ĐƯỢC theo
+  /// yêu cầu: symbol giá rất nhỏ (vd `0.00001234`) với `fixedLength` thấp
+  /// (mặc định 2) có thể ra nhiều tick trùng nhãn `0.00` — do host app tự
+  /// truyền `fixedLength` đúng theo precision thật của symbol để tránh.
   ///
   /// Vẽ vào [priceAxisRect] (strip riêng bên phải, §7) — KHÔNG đè lên
   /// `chartRect` (nến) như trước khi có strip.
   @override
   void drawVerticalText(Canvas canvas, TextStyle textStyle, int gridRows) {
-    final int decimals = decimalsFor(_priceStep);
     for (final price in _priceTicks) {
       final double y = _priceToScreenY(price);
       final TextPainter tp = _cachedPriceLabel(
-        NumberUtil.formatFixed(price, decimals) ?? '',
+        NumberUtil.formatFixed(price, fixedLength) ?? '',
         textStyle,
       );
 

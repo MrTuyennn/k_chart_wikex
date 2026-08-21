@@ -388,15 +388,14 @@ void main() {
         },
       );
 
-      // Yêu cầu trực tiếp từ user: "đẩy live-price ra ngoài nằm trên axis Y
-      // luôn" — badge now-price (đóng `right`, mặc định) giờ đặt chủ yếu
-      // TRÊN price-axis strip (bên phải `mPlotWidth`), mép trái chỉ lấn nhẹ
-      // vào plot (hoặc khớp sát/vượt nhẹ qua `mPlotWidth`, tuỳ `space` hiện
-      // tại — đã chỉnh dần về `0`) — khác trước (badge nằm gọn trong
-      // `mPlotWidth`, cách mép `space` px, xa hẳn về bên trái theo độ dài
-      // text).
+      // Yêu cầu trực tiếp từ user: "liveprice cho sát mép width luôn khỏi
+      // padding" — badge now-price (đóng `right`, mặc định) giờ neo theo mép
+      // PHẢI thật của canvas (`mWidth`), không phải mép trái cố định ở
+      // `mPlotWidth` như trước (khi đó mép phải trôi theo độ dài text, có thể
+      // hở khoảng trắng tới mép canvas nếu `priceAxisWidth` — co giãn theo
+      // label trục giá, không liên quan `badgeWidth` — rộng hơn badge).
       testWidgets(
-        'verticalTextAlignment.right (mặc định): badge now-price nằm chủ yếu trên price-axis strip',
+        'verticalTextAlignment.right (mặc định): badge now-price sát mép phải canvas',
         (tester) async {
           final candles = _syntheticCandles(50);
           DataUtil.calculateAll(candles, [], []);
@@ -408,19 +407,20 @@ void main() {
           expect(globalRRects.length, 1);
           final badgeRect = globalRRects[0].outerRect;
 
-          // Mép trái badge nằm SÁT `mPlotWidth` (có thể lấn nhẹ vào plot,
-          // khớp sát, hoặc vượt nhẹ qua bên strip — tuỳ `space` hiện tại,
-          // KHÔNG còn khoá cứng "luôn < mPlotWidth" vì `space` đã chỉnh về
-          // `0`, không lấn vào plot nữa), phần LỚN thân badge nằm bên phải
-          // mPlotWidth (trên price-axis strip) — trước đây badge nằm gọn
-          // trong mPlotWidth (mép phải cách mPlotWidth đúng space, mép trái
-          // xa hơn nữa về bên trái theo độ dài text) nên assertion này trước
-          // đây sẽ fail. Dùng ngưỡng RỘNG RÃI (±12px quanh mPlotWidth) thay
-          // vì khớp sát đúng giá trị `space` — tránh test tự vỡ mỗi khi
-          // chỉnh nhẹ `space`/padding hay đổi độ dài text hiển thị.
-          expect(badgeRect.left, lessThanOrEqualTo(painter.mPlotWidth + 12.0));
-          expect(badgeRect.left, greaterThanOrEqualTo(painter.mPlotWidth - 12.0));
-          expect(badgeRect.right, greaterThan(painter.mPlotWidth));
+          // Mép PHẢI badge khớp sát `mWidth` (mép phải thật của canvas) —
+          // đây là điểm neo cố định mới, bất kể `priceAxisWidth`/độ dài text.
+          // Dung sai 1.5px (không phải 0.5) vì RRect nền vẽ bởi
+          // `LivePriceBadgePainter` tự inset nhẹ theo viewBox gốc của SVG
+          // (mũi tên notch bên phải, xem field `_viewBoxWidth`/rect literal ở
+          // đó) — khung `Size(badgeWidth, badgeHeight)` truyền vào MỚI khớp
+          // đúng `mWidth`, còn RRect vẽ ra chỉ chiếm ~98.6% bề rộng đó.
+          expect(badgeRect.right, closeTo(painter.mWidth, 1.5));
+          // Badge vẫn nằm quanh price-axis strip (bên phải mPlotWidth) — dung
+          // sai RỘNG (10px, không phải 0.5px) vì mép trái phụ thuộc
+          // `badgeWidth` (text + `_liveBadgePaddingX*2`, đổi mỗi lần chỉnh
+          // padding trong badge — vd "thêm padding trong cho liveprice"),
+          // không phải hằng số cố định như mép phải (`mWidth`).
+          expect(badgeRect.left, greaterThanOrEqualTo(painter.mPlotWidth - 10.0));
         },
       );
     },

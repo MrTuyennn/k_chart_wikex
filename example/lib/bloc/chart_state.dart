@@ -87,6 +87,7 @@ enum ChartTimeframe {
 class ChartState extends Equatable {
   const ChartState({
     required this.data,
+    required this.symbol,
     required this.timeframe,
     required this.mainTypes,
     required this.secondaryTypes,
@@ -107,6 +108,12 @@ class ChartState extends Equatable {
   });
 
   final List<KLineEntity> data;
+
+  /// Cặp giao dịch đang xem (vd `"BTC/USDT"`, `"ETH/USDT"`) — đổi qua
+  /// [ChartSymbolChanged], xem `ChartBloc._onSymbolChanged`. Mọi REST
+  /// fetch/WS subscribe/filter frame trong bloc đọc từ field này thay vì
+  /// hardcode `MarketEnv.symbol`.
+  final String symbol;
   final ChartTimeframe timeframe;
   final Set<MainIndicatorType> mainTypes;
   final Set<SecondaryIndicatorType> secondaryTypes;
@@ -156,6 +163,7 @@ class ChartState extends Equatable {
 
   ChartState copyWith({
     List<KLineEntity>? data,
+    String? symbol,
     ChartTimeframe? timeframe,
     Set<MainIndicatorType>? mainTypes,
     Set<SecondaryIndicatorType>? secondaryTypes,
@@ -176,6 +184,7 @@ class ChartState extends Equatable {
   }) {
     return ChartState(
       data: data ?? this.data,
+      symbol: symbol ?? this.symbol,
       timeframe: timeframe ?? this.timeframe,
       mainTypes: mainTypes ?? this.mainTypes,
       secondaryTypes: secondaryTypes ?? this.secondaryTypes,
@@ -252,6 +261,7 @@ class ChartState extends Equatable {
   @override
   List<Object?> get props => [
     data,
+    symbol,
     timeframe,
     mainTypes,
     secondaryTypes,

@@ -19,6 +19,18 @@ class ChartStarted extends ChartEvent {
   const ChartStarted();
 }
 
+/// Đổi cặp giao dịch (vd `BTC/USDT` -> `ETH/USDT`) — reset toàn bộ
+/// data/realtime của cặp cũ (`data`, `livePrice`, `orderBook`), huỷ + subscribe
+/// lại WS theo cặp mới, refetch REST history. Giữ nguyên timeframe/indicator/
+/// UI toggle đang chọn — xem `ChartBloc._onSymbolChanged`.
+class ChartSymbolChanged extends ChartEvent {
+  const ChartSymbolChanged(this.symbol);
+  final String symbol;
+
+  @override
+  List<Object?> get props => [symbol];
+}
+
 /// Đổi khung thời gian (15m/1H/4H/1D) — refetch REST theo resolution mới.
 class ChartTimeframeChanged extends ChartEvent {
   const ChartTimeframeChanged(this.timeframe);

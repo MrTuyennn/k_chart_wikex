@@ -607,28 +607,34 @@ class ChartPainter extends BaseChartPainter {
 
     double paddingX = _liveBadgePaddingX, paddingY = _liveBadgePaddingY;
     double space = _liveBadgeSpace;
+    // `right` (mặc định): badgeWidth KHỚP ĐÚNG bề rộng strip trục Y
+    // (`priceAxisWidth`) — yêu cầu trực tiếp "chiều rộng liveprice bằng
+    // chiều rộng axisY" — khác trước (`tp.width + paddingX*2`, tự co theo độ
+    // dài text, có thể hẹp/rộng hơn strip tuỳ giá). `left`: không có strip
+    // nào để khớp (badge đặt ở mép trái CANVAS, ngoài `mPriceAxisRect` — xem
+    // case bên dưới), giữ nguyên fit theo text như cũ.
+    final badgeWidth = verticalTextAlignment == VerticalTextAlignment.right
+        ? priceAxisWidth
+        : tp.width + paddingX * 2;
     double offsetX;
     switch (verticalTextAlignment) {
       case VerticalTextAlignment.left:
         offsetX = space;
         break;
       case VerticalTextAlignment.right:
-        // Đẩy hẳn ra ngoài, nằm TRÊN price-axis strip (yêu cầu trực tiếp) —
-        // khác trước (nằm gọn trong mPlotWidth). Chỉ trừ `space` (không trừ
-        // thêm `tp.width + paddingX*2` như cũ) — mép TRÁI badge (nơi mũi tên
-        // của LivePriceBadgePainter trỏ vào, xem doc field đó) chỉ lấn nhẹ
-        // `space` px vào plot để "chạm" đúng đường now-price, còn lại toàn bộ
-        // thân badge nằm trên strip giá bên phải `mPlotWidth`.
-        offsetX = mPlotWidth - space;
+        // badgeWidth == priceAxisWidth nên mWidth - badgeWidth == mPlotWidth
+        // (đúng định nghĩa `mPlotWidth = mWidth - priceAxisWidth`) — badge
+        // lấp đầy CHÍNH XÁC strip trục Y, mép trái/phải khớp `mPlotWidth`/
+        // `mWidth`, không hở cũng không tràn dù giá dài/ngắn bao nhiêu.
+        offsetX = mWidth - badgeWidth;
         break;
     }
 
     double top = y - tp.height / 2;
-    final badgeWidth = tp.width + paddingX * 2;
     final badgeHeight = tp.height + paddingY * 2;
 
-    // Nền badge "flag" — width/height tự scale theo độ dài text giá
-    // (LivePriceBadgePainter.paint tự nhân tỉ lệ theo size truyền vào).
+    // Nền badge "flag" — height vẫn tự scale theo chữ, width giờ khớp
+    // priceAxisWidth (case `right`) thay vì theo độ dài text (xem trên).
     canvas.save();
     canvas.translate(offsetX, top - paddingY);
     LivePriceBadgePainter(
@@ -636,15 +642,28 @@ class ChartPainter extends BaseChartPainter {
     ).paint(canvas, Size(badgeWidth, badgeHeight));
     canvas.restore();
 
-    tp.paint(canvas, Offset(offsetX + paddingX, top));
+    // Text CĂN GIỮA theo chiều ngang trong badge — yêu cầu trực tiếp "padding
+    // 2 bên luôn" (trước đó case `right` canh phải, phần dư bên trái do
+    // badgeWidth == priceAxisWidth thường rộng hơn hẳn text nên lệch hẳn 1
+    // bên, không còn ra "padding" cân đối). Case `left` không đổi hành vi
+    // (badge vốn đã fit khít text + paddingX*2 nên căn giữa == căn trái cũ,
+    // cùng cho đúng paddingX đều 2 bên).
+    final double textX = offsetX + (badgeWidth - tp.width) / 2;
+    tp.paint(canvas, Offset(textX, top));
   }
 
   // paddingX/paddingY/space của badge live price (drawNowPrice) — tách
   // thành static const DÙNG CHUNG với [drawBidAsk] (khác trước: hằng số
-  // riêng biệt dễ lệch nhau nếu chỉ sửa 1 bên — /code-review finding).
+  // riêng biệt dễ lệch nhau nếu chỉ sửa 1 bên — /code-review finding). LƯU Ý:
+  // [drawBidAsk] không dùng lại giá trị này làm padding TRONG của box Ask/Bid
+  // (đó là [_bidAskPaddingX]/[_bidAskPaddingY], hằng số hoàn toàn riêng) — nó
+  // chỉ cần đúng giá trị này để TÍNH LẠI kích thước thật của badge live price
+  // (`flagBadgeWidth`) hòng đặt box cạnh đúng vị trí, không đè lên badge. Vì
+  // vậy đổi paddingX/paddingY ở đây KHÔNG ảnh hưởng padding trong box Ask/Bid.
   // paddingX/paddingY (padding TRONG, quanh chữ) giảm dần 6→5→3 / 4→3 theo
   // các yêu cầu trực tiếp liên tiếp ("padding trong của liveprice nhỏ lại
-  // tí"), chỉnh trực tiếp trong code ở đợt cuối (paddingX 5→3).
+  // tí"), rồi tăng lại 3→5 theo yêu cầu ngược lại ("thêm padding trong cho
+  // liveprice").
   // space (padding NGOÀI, khoảng lấn vào plot khi đóng `right`/khoảng cách
   // mép khi đóng `left`) revert lại 8→5 rồi giảm dần 5→3→0 theo các yêu cầu
   // trực tiếp ("nằm ra ngoài cùng và cách 5px thui", "padding ngoài bên phải
@@ -652,15 +671,16 @@ class ChartPainter extends BaseChartPainter {
   // badge (đóng `right`) khớp CHÍNH XÁC `mPlotWidth`, không còn lấn vào plot
   // (trước đó lấn nhẹ vài px để mũi tên "chạm" đường dashed); đóng `left`,
   // badge sát tuyệt đối mép trái canvas (`offsetX = 0`, không còn khoảng hở).
-  static const double _liveBadgePaddingX = 3.0;
-  static const double _liveBadgePaddingY = 3.0;
+  static const double _liveBadgePaddingX = 5.0;
+  static const double _liveBadgePaddingY = 5.0;
   static const double _liveBadgeSpace = 0;
 
   // Padding X/Y trong mỗi ô, khe hở giữa Ask/Bid, khe hở giữa box và badge
   // live price — tách thành static const cho dễ chỉnh, không dùng ở đâu
-  // khác ngoài [drawBidAsk]. paddingX bóp lại 6→3 theo yêu cầu trực tiếp
-  // ("bóp padding trong như liveprice") — khớp giá trị cuối cùng của
-  // [_liveBadgePaddingX]/[_liveBadgePaddingY] (3/3).
+  // khác ngoài [drawBidAsk]. ĐỘC LẬP với [_liveBadgePaddingX]/
+  // [_liveBadgePaddingY] (padding trong của badge live price) — yêu cầu
+  // trực tiếp "thêm padding trong cho liveprice" chỉ áp cho badge đó, không
+  // đổi padding trong của box Ask/Bid này.
   static const double _bidAskPaddingX = 2.0, _bidAskPaddingY = 2.0;
   static const double _bidAskCellGap = 2.0;
   static const double _bidAskGapNextToFlag = 4.0;
@@ -738,13 +758,17 @@ class ChartPainter extends BaseChartPainter {
     // (`priceTp.width`, dùng chung [_liveBadgePaddingX]/[_liveBadgeSpace] với
     // drawNowPrice, xem doc ở đó) để box Ask/Bid đặt sát ngay cạnh, không đè
     // lên badge đó.
+    // `right`: badgeWidth == priceAxisWidth (khớp `drawNowPrice`, xem doc ở
+    // đó — "chiều rộng liveprice bằng chiều rộng axisY"), không còn phụ
+    // thuộc độ dài text `priceTp`. `left`: vẫn fit theo text như cũ (không có
+    // strip để khớp). 2 công thức PHẢI khớp nhau, sửa 1 bên thì sửa luôn bên
+    // kia.
     final priceTp = buildTp(NumberUtil.formatFixed(value, fixedLength) ?? '');
-    final double flagBadgeWidth = priceTp.width + _liveBadgePaddingX * 2;
-    // `right`: khớp đúng offsetX mới của drawNowPrice (đẩy ra ngoài, nằm
-    // trên price-axis strip — chỉ trừ `space`, không trừ thêm `flagBadgeWidth`
-    // như trước). 2 công thức PHẢI khớp nhau, sửa 1 bên thì sửa luôn bên kia.
+    final double flagBadgeWidth = verticalTextAlignment == VerticalTextAlignment.right
+        ? priceAxisWidth
+        : priceTp.width + _liveBadgePaddingX * 2;
     final double flagLeft = verticalTextAlignment == VerticalTextAlignment.right
-        ? mPlotWidth - _liveBadgeSpace
+        ? mWidth - flagBadgeWidth
         : _liveBadgeSpace;
     final double flagRight = flagLeft + flagBadgeWidth;
 
