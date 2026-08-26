@@ -1019,6 +1019,9 @@ An toàn để giảm mà không cần đổi gì khác:
 | `detailBuilder` | `(candle) → View` | Builder cho popup chi tiết khi long-press/tap. |
 | `backgroundLogo` | View? | Watermark giữa vùng main chart. |
 | `backgroundLogoOpacity` | number (0–1) | Độ mờ watermark. |
+| `loading` | boolean | `true` = hiện spinner giữa chart khi `datas` null/rỗng. LUÔN thắng `emptyPlaceholder`. Mặc định `false`. |
+| `loadingWidget` | View? | Custom nội dung loading khi `loading: true` — thay `CircularProgressIndicator.adaptive()` mặc định. |
+| `emptyPlaceholder` | View? | Widget hiện GIỮA chart (nền trong suốt, canvas/grid vẫn lộ ra) khi `datas` null/rỗng VÀ `loading: false` — vd text "no data" hoặc nút "Thử lại". Không `IgnorePointer` (khác `backgroundLogo`). `null` + `loading: false` (mặc định) = chỉ bg + grid + logo (nếu có), không vẽ gì thêm. |
 | `onLoadMore` | `(bool) → void` | Xem §6.8. |
 | `isLoadingMore` | boolean | Chặn spam trigger `onLoadMore` khi đang chờ kết quả trước. |
 | `isOnDrag` | `(bool) → void` | Báo trạng thái đang kéo/animation quán tính. |

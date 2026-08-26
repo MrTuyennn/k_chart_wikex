@@ -245,12 +245,20 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
           prev.data.isEmpty != curr.data.isEmpty ||
           prev.error != curr.error,
       builder: (context, shellState) {
+        // Full-page placeholder CHỈ còn cho lỗi cứng (cần nút "Thử lại" +
+        // layout riêng center-screen). Loading (bootstrap lẫn đổi
+        // timeframe/symbol) không còn che body — luôn vào chart region, để
+        // `KChartWidget.emptyPlaceholder` tự hiện spinner/nội dung rỗng NGAY
+        // TRONG vùng chart, chips/controls/order-book vẫn hiển thị bình
+        // thường song song.
+        final showEmptyBody =
+            shellState.data.isEmpty && shellState.error != null;
         return Scaffold(
           backgroundColor: shellState.isDark
               ? const Color(0xFF0B0E11)
               : Colors.white,
           appBar: _buildAppBar(context, shellState),
-          body: shellState.data.isEmpty
+          body: showEmptyBody
               ? _buildEmptyBody(context, shellState)
               : SingleChildScrollView(
                   controller: _outerScrollController,
@@ -287,10 +295,7 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
       elevation: 0,
       title: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSymbolSwitch(shellState.isDark),
-          _buildPriceTicker(),
-        ],
+        children: [_buildSymbolSwitch(shellState.isDark), _buildPriceTicker()],
       ),
       actions: [
         Row(
@@ -447,53 +452,53 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
     );
   }
 
-  /// Chưa có nến nào (đang bootstrap REST hoặc lỗi mạng) — spinner / retry.
+  /// Lỗi cứng (REST fail, chưa có nến nào để hiện) — icon + message + nút
+  /// "Thử lại". Chỉ gọi khi `state.error != null` (xem điều kiện
+  /// `showEmptyBody` ở `build()`) — loading (bootstrap/đổi timeframe) không
+  /// còn qua đây nữa, đã chuyển vào `KChartWidget.emptyPlaceholder`.
   Widget _buildEmptyBody(BuildContext context, ChartState state) {
-    if (state.error != null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.wifi_off,
-              size: 40,
-              color: state.isDark ? Colors.white38 : Colors.black38,
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.wifi_off,
+            size: 40,
+            color: state.isDark ? Colors.white38 : Colors.black38,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            MarketEnv.isConfigured
+                ? 'Không tải được dữ liệu từ ${MarketEnv.apiBaseUrl}'
+                : 'Chưa cấu hình endpoint API',
+            style: TextStyle(
+              fontSize: 13,
+              color: state.isDark ? Colors.white70 : Colors.black54,
             ),
-            const SizedBox(height: 12),
-            Text(
-              MarketEnv.isConfigured
-                  ? 'Không tải được dữ liệu từ ${MarketEnv.apiBaseUrl}'
-                  : 'Chưa cấu hình endpoint API',
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Text(
+              state.error!,
+              textAlign: TextAlign.center,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 13,
-                color: state.isDark ? Colors.white70 : Colors.black54,
+                fontSize: 11,
+                color: state.isDark ? Colors.white38 : Colors.black38,
               ),
             ),
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Text(
-                state.error!,
-                textAlign: TextAlign.center,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: state.isDark ? Colors.white38 : Colors.black38,
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: () =>
-                  context.read<ChartBloc>().add(const ChartStarted()),
-              child: const Text('Thử lại'),
-            ),
-          ],
-        ),
-      );
-    }
-    return const Center(child: CircularProgressIndicator());
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: () =>
+                context.read<ChartBloc>().add(const ChartStarted()),
+            child: const Text('Thử lại'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _sectionHeader(String title, ChartState state) {
@@ -517,8 +522,14 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
     final mutedColor = state.isDark ? Colors.white38 : Colors.black38;
 
     final book = state.orderBook;
-    if (book == null || !book.hasBothSides) {
-      // Chưa nhận đủ 2 phía BUY/SELL từ WS trade-plate
+    // `state.data.isEmpty` cũng phải chặn ở đây — `book` (WS trade-plate)
+    // chảy ĐỘC LẬP với `data` (REST theo timeframe/symbol), nên có khoảng
+    // trống ngắn lúc đổi timeframe (data reset về `[]`, xem
+    // `ChartBloc._onTimeframeChanged`) mà `book` vẫn còn từ trước —
+    // `state.data.last` bên dưới sẽ throw "Bad state: No element" nếu không
+    // chặn trước.
+    if (book == null || !book.hasBothSides || state.data.isEmpty) {
+      // Chưa nhận đủ 2 phía BUY/SELL từ WS trade-plate (hoặc chưa có data)
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 24),
         child: Center(
@@ -727,23 +738,6 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Banner trạng thái load
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          height: state.isFetching ? 28 : 0,
-          color: const Color(0xFFF0B90B),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                'Đang tải thêm ${ChartState.loadMoreBatchSize} nến...',
-                style: const TextStyle(color: Colors.black, fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-        // Timeframe + scale đã lưu — cuộn ngang: 7 khung (1m..1D) không đủ
-        // chỗ trong 1 Row cố định trên màn hình hẹp (RenderFlex overflow).
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 4, 0, 0),
           child: Row(
@@ -1046,6 +1040,20 @@ class _ChartDemoPageState extends State<ChartDemoPage> {
         },
       ),
       backgroundLogoOpacity: 1,
+      // Demo `KChartWidget.loading`/`emptyPlaceholder` — map thẳng từ
+      // `state.isFetching` (bloc), không cần tự check `isFetching` trong
+      // `emptyPlaceholder` nữa: `loading: true` tự thắng, package vẽ spinner
+      // adaptive mặc định (không set `loadingWidget` — demo đúng nhánh
+      // default). Fetch xong (`loading: false`) mà `data` vẫn rỗng/lỗi →
+      // `emptyPlaceholder` (text) tự lộ ra.
+      loading: state.isFetching,
+      emptyPlaceholder: Text(
+        state.error != null ? 'Lỗi tải dữ liệu' : 'Không có dữ liệu',
+        style: TextStyle(
+          fontSize: 13,
+          color: state.isDark ? Colors.white54 : Colors.black45,
+        ),
+      ),
     );
   }
 

@@ -230,6 +230,9 @@ Dragging left past where the chart normally rests (right after `xFrontPadding`) 
 | `bidLabel`/`askLabel`   | `String`  | `'Bid'`/`'Ask'` | Text shown before the price in the bid/ask badges |
 | `backgroundLogo`        | `Widget?` | `null`  | Watermark widget centered in main chart area |
 | `backgroundLogoOpacity` | `double`  | `1.0`   | Watermark opacity (0.0–1.0)                  |
+| `loading`               | `bool`    | `false` | `true` = show a loading spinner centered over the chart when `datas` is null/empty. Always wins over `emptyPlaceholder` |
+| `loadingWidget`         | `Widget?` | `null`  | Custom widget shown while `loading` is `true`, instead of the default `CircularProgressIndicator.adaptive()` |
+| `emptyPlaceholder`      | `Widget?` | `null`  | Widget centered over the chart when `datas` is null/empty AND `loading` is `false` (transparent background — grid still shows through) |
 
 ---
 
@@ -652,6 +655,32 @@ KChartWidget(
 ```
 
 > The logo uses `IgnorePointer` internally and does not interfere with gestures.
+
+---
+
+## Empty state (`datas` null/empty)
+
+By default, `datas: null` or `datas: []` renders **just background + grid** (+ `backgroundLogo` watermark if set) — no candles, no crash. Two opt-in params layer on top of that, both centered, transparent background, and **mutually exclusive** (`loading` always wins when both apply):
+
+- `loading: true` — shows a loading spinner: `loadingWidget` if you set one, otherwise a built-in default `CircularProgressIndicator.adaptive()`.
+- `emptyPlaceholder` — shown only when `loading` is `false`, for anything else (a "no data" message, a "Retry" button).
+
+Because `loading` always wins, you can set `emptyPlaceholder` **unconditionally** — no need to null it out yourself while fetching:
+
+```dart
+KChartWidget(
+  data, // [] while loading, or genuinely empty after fetch
+  chartStyle,
+  chartColors,
+  loading: isFetching,
+  emptyPlaceholder: const Text('No data'), // only shows once isFetching is false
+  ...
+)
+```
+
+`KChartWidget` only knows `datas` is empty — it has no concept of "loading" vs. "fetched, genuinely empty". Deciding which of those it is (via `loading`) and what to show in either case is the caller's job, based on the caller's own fetch state.
+
+> Unlike `backgroundLogo`, neither `emptyPlaceholder` nor the `loading` spinner is wrapped in `IgnorePointer` — put an interactive "Retry" button in `emptyPlaceholder` if you want one.
 
 ---
 

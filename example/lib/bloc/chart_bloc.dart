@@ -327,7 +327,12 @@ class ChartBloc extends Bloc<ChartEvent, ChartState> {
     // Đổi khung → clear buffer WS của khung cũ rồi refetch REST.
     // Subscription giữ nguyên (cùng symbol) — chỉ filter `period` đổi.
     _pending.clear();
-    emit(state.copyWith(timeframe: event.timeframe));
+    // Reset `data` về rỗng NGAY (không đợi REST) — nến khung CŨ khác hẳn
+    // khung MỚI (không phải cùng dữ liệu thu nhỏ/phóng to), giữ lại vừa sai
+    // số liệu vừa không cho `KChartWidget.loading` hiện spinner (field đó
+    // chỉ kích hoạt khi `datas` rỗng — xem doc `emptyPlaceholder`/`loading`).
+    // Cùng cách `_onSymbolChanged` đã làm khi đổi coin.
+    emit(state.copyWith(data: const [], timeframe: event.timeframe));
     await _loadHistory(event.timeframe, emit);
   }
 
