@@ -429,8 +429,26 @@ abstract class BaseChartPainter extends CustomPainter {
   /// calculate values
   void calculateValue() {
     mTimeTicks = [];
-    if (datas == null) return;
-    if (datas!.isEmpty) return;
+    if (datas == null || datas!.isEmpty) {
+      // Không có nến để scan min/max thật — `mMainMaxValue`/`mMainMinValue`
+      // (cùng vol/secondary) đang giữ sentinel dò min/max (`minPositive` cho
+      // tracker MAX, `maxFinite` cho tracker MIN — xem khai báo field), đảo
+      // ngược nhau khi chưa scan qua nến nào. `initChartRenderer()` (gọi
+      // UNCONDITIONALLY mỗi paint, kể cả rỗng) feed thẳng cặp giá trị đảo
+      // ngược đó vào MainRenderer/VolRenderer/SecondaryRenderer → priceRange
+      // ≈ -maxFinite → NaN/Infinity khi renderer tính tỉ lệ pixel/giá, crash
+      // "Infinity or NaN toInt". Reset về range hợp lệ (0..1) trước khi
+      // return sớm để renderer luôn nhận range hữu hạn, dù không vẽ nến nào.
+      mMainMaxValue = 1;
+      mMainMinValue = 0;
+      mVolMaxValue = 1;
+      mVolMinValue = 0;
+      for (final r in mSecondaryRectList) {
+        r.mMaxValue = 1;
+        r.mMinValue = 0;
+      }
+      return;
+    }
     maxScrollX = getMinTranslateX().abs();
     // Cùng cách co giãn theo bề rộng chart hẹp như xFrontPadding (dùng chung
     // effectiveRightPaddingPx) — scaleX luôn > 0 (đã clamp ở widget qua

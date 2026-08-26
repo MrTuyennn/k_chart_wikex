@@ -135,6 +135,28 @@ class KChartWidget extends StatefulWidget {
   /// Kết thúc pinch / scaleY / zoom controller / double-tap reset scaleY.
   final OnChartScaleChanged? onChartScaleChanged;
 
+  /// `true` = đang fetch data ở tầng gọi (REST/WS) — khi [datas] null/rỗng,
+  /// THẮNG [emptyPlaceholder] hoàn toàn (xem field đó) và vẽ [loadingWidget]
+  /// nếu có, hoặc `CircularProgressIndicator.adaptive()` mặc định nếu
+  /// [loadingWidget] không set. Mặc định `false`.
+  final bool loading;
+
+  /// Custom nội dung loading khi [loading] = `true` — thay cho
+  /// `CircularProgressIndicator.adaptive()` mặc định. Không có tác dụng khi
+  /// [loading] = `false`. `null` (mặc định) = dùng spinner adaptive mặc định.
+  final Widget? loadingWidget;
+
+  /// Widget hiện GIỮA chart (nền trong suốt, không che canvas/grid bên dưới)
+  /// khi [datas] null/rỗng VÀ [loading] = `false` — vd text "Không có dữ
+  /// liệu" sau khi fetch xong mà vẫn rỗng thật, hoặc nút "Thử lại" khi lỗi.
+  /// [loading] = `true` LUÔN thắng field này (đang loading thì ưu tiên
+  /// spinner, không hiện `emptyPlaceholder`) — nhờ vậy tầng gọi chỉ cần set
+  /// `loading: isFetching` và set field này KHÔNG ĐIỀU KIỆN (không cần tự
+  /// `isFetching ? null : ...`), `KChartWidget` tự chọn đúng cái nào hiện.
+  /// `null` (mặc định, kèm `loading: false`) = không vẽ gì thêm khi rỗng,
+  /// giữ hành vi cũ (chỉ bg + grid + `backgroundLogo` nếu có).
+  final Widget? emptyPlaceholder;
+
   const KChartWidget(
     this.datas,
     this.chartStyle,
@@ -177,6 +199,9 @@ class KChartWidget extends StatefulWidget {
     this.onVerticalOverscroll,
     this.chartScale,
     this.onChartScaleChanged,
+    this.loading = false,
+    this.loadingWidget,
+    this.emptyPlaceholder,
     super.key,
   });
 
@@ -404,10 +429,18 @@ class _KChartWidgetState extends State<KChartWidget>
 
   @override
   Widget build(BuildContext context) {
-    if (widget.datas != null && widget.datas!.isEmpty) {
+    final bool isEmptyData = widget.datas == null || widget.datas!.isEmpty;
+    if (isEmptyData) {
       mScrollX = mSelectX = 0.0;
       mScaleX = 1.0;
     }
+    // `loading` LUÔN thắng [emptyPlaceholder] — đang loading thì ưu tiên
+    // spinner ([loadingWidget] custom, hoặc adaptive mặc định), không hiện
+    // nội dung rỗng. Nhờ vậy tầng gọi set `emptyPlaceholder` KHÔNG ĐIỀU KIỆN
+    // (không cần tự `isFetching ? null : ...`) — field này tự nhường chỗ.
+    final Widget? effectiveEmptyContent = widget.loading
+        ? (widget.loadingWidget ?? const CircularProgressIndicator.adaptive())
+        : widget.emptyPlaceholder;
     final BaseDimension baseDimension = BaseDimension(
       mBaseHeight: widget.mBaseHeight,
       mSecondaryHeight: widget.mSecondaryHeight ?? widget.mBaseHeight * .2,
@@ -749,6 +782,23 @@ class _KChartWidgetState extends State<KChartWidget>
             ),
           ),
           if (widget.showInfoDialog) _buildInfoDialog(),
+          // layer trên cùng: placeholder khi datas null/rỗng — xem doc
+          // [KChartWidget.emptyPlaceholder]/[KChartWidget.loading]. Nền trong
+          // suốt (canvas/grid bên dưới vẫn lộ ra) — chỉ center nội dung, không
+          // che gì thêm. Không IgnorePointer vì consumer có thể đặt nút
+          // "Thử lại" (hoặc spinner mặc định của `loading`, không tương tác
+          // nhưng cũng không cần chặn pointer).
+          if (effectiveEmptyContent != null && isEmptyData)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              // Đúng chiều cao TOÀN BỘ canvas (khớp `CustomPaint.size` bên
+              // trên: main + volume + secondary + label) — center ở đây mới
+              // là chính giữa cả KChartWidget, không chỉ giữa vùng main chart.
+              height: baseDimension.mDisplayHeight,
+              child: Center(child: effectiveEmptyContent),
+            ),
         ],
       ),
     );

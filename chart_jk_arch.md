@@ -49,6 +49,10 @@ KChartWidget  (state + gesture)
    ├─ ColoredBox(bgColor)                     ← chỉ khi có backgroundLogo
    ├─ backgroundLogo (IgnorePointer, Center)  ← watermark giữa main rect
    ├─ CustomPaint(painter: ChartPainter)
+   │                                          ← datas null/rỗng: chỉ vẽ bg+grid (drawBg/
+   │                                            drawGrid chạy unconditionally), KHÔNG vẽ nến/
+   │                                            indicator (paint() gate hẳn nhánh đó theo
+   │                                            `datas!.isNotEmpty`, xem bên dưới)
    │   └─ ChartPainter.paint()
    │       ├─ initRect()              → mPlotWidth, mMainRect, mVolRect?, mDateRect, mSecondaryRectList[], mPriceAxisRect, mCornerRect
    │       ├─ calculateValue()        → mStartIndex/mStopIndex (theo mPlotWidth) + max/min + mTimeTicks (weight-ladder planner, CHART_AXES.md §5)
@@ -72,8 +76,13 @@ KChartWidget  (state + gesture)
    │       ├─ drawMaxAndMin() / drawNowPrice()     (qua _applyScaleY)
    │       ├─ drawBidAsk()               (chạy NGAY SAU drawNowPrice — box Ask/Bid, chỉ khi bidPrice+askPrice cùng non-null, xem §5.8)
    │       └─ drawCrossLineText() (nếu long-press/tap — span cả mWidth, KHÔNG bị giới hạn mPlotWidth, xem CHART_AXES.md §7.5)
-   └─ Positioned (right:0) + LayoutBuilder → w = BaseChartPainter.priceAxisWidth
-       ─ vùng gesture scaleY + double-tap reset scaleY/offsetY (khớp đúng strip giá đang vẽ, §7.7)
+   ├─ Positioned (right:0) + LayoutBuilder → w = BaseChartPainter.priceAxisWidth
+   │   ─ vùng gesture scaleY + double-tap reset scaleY/offsetY (khớp đúng strip giá đang vẽ, §7.7)
+   └─ loading ? (loadingWidget ?? adaptive spinner) : emptyPlaceholder —
+       Center, nền trong suốt ← layer TRÊN CÙNG, chỉ khi datas null/rỗng VÀ
+       nội dung này != null. loading LUÔN thắng emptyPlaceholder. KHÔNG
+       IgnorePointer (khác backgroundLogo) — cho phép đặt nút "Thử lại"
+       tương tác được.
 ```
 
 ### Flow dữ liệu
@@ -448,7 +457,7 @@ File: `lib/k_chart_widget.dart`.
 
 | Param           | Kiểu                           | Ý nghĩa                               |
 | --------------- | ------------------------------ | ------------------------------------- |
-| `datas`         | `List<KLineEntity>?`           | Data nguồn. Empty/null = chart trống. |
+| `datas`         | `List<KLineEntity>?`           | Data nguồn. Empty/null = chart trống (chỉ bg + grid, + `backgroundLogo`/`emptyPlaceholder` nếu set — §5.6/§5.6b). |
 | `chartStyle`    | `KChartStyle`                  | Kích thước, padding, line width.      |
 | `chartColors`   | `KChartColors`                 | Toàn bộ màu.                          |
 | `detailBuilder` | `Widget Function(KLineEntity)` | Builder cho info dialog (long-press). |
@@ -513,6 +522,16 @@ File: `lib/k_chart_widget.dart`.
 | ----------------------- | ------- | ------------------------------------------------------------ |
 | `backgroundLogo`        | `null`  | Widget overlay ở giữa main chart. Có `IgnorePointer` nội bộ. |
 | `backgroundLogoOpacity` | `1.0`   | 0.0 ẩn — 1.0 hiện đầy đủ.                                    |
+
+### 5.6b Empty state — `loading`/`loadingWidget`/`emptyPlaceholder`
+
+| Param              | Default | Ý nghĩa |
+| ------------------ | ------- | ------- |
+| `loading`          | `false` | `true` = hiện spinner giữa chart khi `datas` null/rỗng. LUÔN thắng `emptyPlaceholder`. |
+| `loadingWidget`    | `null`  | Custom nội dung loading khi `loading: true` — thay `CircularProgressIndicator.adaptive()` mặc định. Không tác dụng khi `loading: false`. |
+| `emptyPlaceholder` | `null`  | Widget hiện GIỮA chart (nền trong suốt, canvas/grid vẫn lộ ra) khi `datas` null/rỗng VÀ `loading: false`. `null` + `loading: false` = giữ hành vi mặc định (chỉ bg + grid + `backgroundLogo` nếu có, không vẽ gì thêm). |
+
+`KChartWidget` KHÔNG tự phân biệt được "đang loading" vs "đã fetch xong nhưng thật sự rỗng" — nó chỉ thấy `datas` rỗng/null, `loading` là field DUY NHẤT tầng gọi dùng để báo cho nó biết. Map trực tiếp `loading: isFetching` — khi `true`, `loadingWidget` (nếu set) hoặc spinner adaptive mặc định LUÔN thắng, `emptyPlaceholder` bị bỏ qua hoàn toàn. Nhờ precedence này, tầng gọi set `emptyPlaceholder` KHÔNG ĐIỀU KIỆN (không cần tự `isFetching ? null : ...`) — nó tự nhường chỗ khi đang loading, chỉ lộ ra sau khi `loading` về `false` mà `datas` vẫn rỗng thật. Khác `backgroundLogo`, cả `loadingWidget`/`emptyPlaceholder` đều KHÔNG có `IgnorePointer` — cho phép đặt widget tương tác được (vd nút "Thử lại").
 
 ### 5.7 `TimeFormat` constants & ép format nhãn trục thời gian
 
